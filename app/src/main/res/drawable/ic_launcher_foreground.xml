@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher foreground: a print over a second print, with a safelight-orange loupe.
+     Colours are the app's own darkroom palette (ink, paper, safelight). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.08"
+        android:scaleY="1.08">
+
+        <!-- Back print -->
+        <group
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="-7">
+            <path
+                android:fillColor="#FF3A352E"
+                android:pathData="M32.5,33h33a1.5,1.5 0,0 1,1.5 1.5v39a1.5,1.5 0,0 1,-1.5 1.5h-33a1.5,1.5 0,0 1,-1.5 -1.5v-39a1.5,1.5 0,0 1,1.5 -1.5z" />
+        </group>
+
+        <!-- Front print -->
+        <group
+            android:pivotX="54"
+            android:pivotY="54"
+            android:rotation="5">
+            <path
+                android:fillColor="#FFF3EDE2"
+                android:pathData="M38.5,30h33a1.5,1.5 0,0 1,1.5 1.5v39a1.5,1.5 0,0 1,-1.5 1.5h-33a1.5,1.5 0,0 1,-1.5 -1.5v-39a1.5,1.5 0,0 1,1.5 -1.5z" />
+            <path
+                android:fillColor="#FF1C1A17"
+                android:pathData="M40,33h30v30h-30z" />
+            <path
+                android:fillColor="#FF5A5248"
+                android:pathData="M40,63L40,55L48,47L54,53L58,49L70,61L70,63Z" />
+            <path
+                android:fillColor="#FFF3EDE2"
+                android:pathData="M59,40a3,3 0,1 0,6 0a3,3 0,1 0,-6 0z" />
+        </group>
+
+        <!-- Loupe: ink knock-out first so it reads cleanly over the print -->
+        <path
+            android:strokeColor="#FF100F0D"
+            android:strokeWidth="8"
+            android:pathData="M51.5,62a10.5,10.5 0,1 0,21 0a10.5,10.5 0,1 0,-21 0z" />
+        <path
+            android:strokeColor="#FF100F0D"
+            android:strokeWidth="8"
+            android:strokeLineCap="round"
+            android:pathData="M69.5,69.5L75,75" />
+        <path
+            android:strokeColor="#FFFFA24C"
+            android:strokeWidth="3.5"
+            android:pathData="M51.5,62a10.5,10.5 0,1 0,21 0a10.5,10.5 0,1 0,-21 0z" />
+        <path
+            android:strokeColor="#FFFFA24C"
+            android:strokeWidth="4.5"
+            android:strokeLineCap="round"
+            android:pathData="M69.5,69.5L75,75" />
+    </group>
+</vector>

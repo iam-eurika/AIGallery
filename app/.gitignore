@@ -1,0 +1,3 @@
+/build
+# Downloaded at build time by downloadSegmenterModel.
+/src/main/assets/interactive_segmentation.task

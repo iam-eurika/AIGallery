@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The model is ~0.5 GB and the index is rebuilt from MediaStore, so neither is backed up. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="models/" />
+        <exclude domain="file" path="objectbox/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="models/" />
+        <exclude domain="file" path="objectbox/" />
+    </device-transfer>
+</data-extraction-rules>

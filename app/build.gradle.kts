@@ -1,0 +1,138 @@
+import java.net.URI
+import java.security.MessageDigest
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.kapt)
+    // Must come last: it inspects the plugins above to wire up its annotation processor.
+    alias(libs.plugins.objectbox)
+}
+
+android {
+    namespace = "com.lucrativeworm.aigallery"
+    compileSdk {
+        version = release(37)
+    }
+
+    defaultConfig {
+        applicationId = "com.lucrativeworm.aigallery"
+        minSdk = 29
+        targetSdk = 37
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // LiteRT-LM ships large native libs; phones are arm64 and emulators on Macs/PCs are arm64/x86_64.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+
+    buildTypes {
+        release {
+            optimization {
+                enable = true
+                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    buildFeatures {
+        compose = true
+    }
+    testOptions {
+        // Robolectric needs merged resources; Android stubs return defaults instead of throwing.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.isReturnDefaultValues = true
+    }
+    androidResources {
+        noCompress += listOf("litertlm", "tflite", "task")
+    }
+    packaging {
+        jniLibs { useLegacyPackaging = false }
+    }
+}
+
+// The MagicTouch segmentation model (~30 MB) is fetched at build time and verified, rather than
+// committed to git. Unlike EmbeddingGemma it ships in the APK, so circling works instantly.
+val segmenterModel = layout.projectDirectory.file("src/main/assets/interactive_segmentation.task")
+val downloadSegmenterModel by tasks.registering {
+    val dest = segmenterModel.asFile
+    outputs.file(dest)
+    onlyIf { !dest.exists() }
+    doLast {
+        val url = "https://storage.googleapis.com/mediapipe-models/interactive_segmenter_v2/magic_touch/int8/latest/interactive_segmentation.task"
+        val expected = "38431bc66b883404e8397f74c3579404315b9b52b04a46c6346fe906a7309b03"
+        dest.parentFile.mkdirs()
+        val tmp = File(dest.path + ".tmp")
+        URI(url).toURL().openStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256").digest(tmp.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        if (digest != expected) {
+            tmp.delete()
+            throw GradleException(
+                "interactive_segmentation.task checksum mismatch ($digest). Google may have " +
+                    "published a new 'latest' model; verify it and update the expected hash."
+            )
+        }
+        tmp.renameTo(dest)
+    }
+}
+tasks.named("preBuild") { dependsOn(downloadSegmenterModel) }
+
+dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    // Deliberately no Material: the whole UI is built on foundation + our own design tokens.
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.coil.compose)
+    // Video: frames as thumbnails, and a player that can jump to where a search matched.
+    implementation(libs.coil.video)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.exifinterface)
+
+    // EmbeddingGemma 2, two ways: Android's own copy through ML Kit GenAI (AICore devices), or
+    // the bundled LiteRT-LM model through MediaPipe's UniversalEmbedder everywhere else.
+    implementation(libs.mlkit.genai.embedding)
+    implementation(libs.mediapipe.tasks.retrieval)
+    implementation(libs.litertlm.android)
+    // MagicTouch interactive segmenter: turns a circle/scribble into the mask of one object.
+    implementation(libs.mediapipe.tasks.vision)
+    // QR codes in photos: ML Kit's bundled (offline, no Play Services) barcode model.
+    implementation(libs.mlkit.barcode.scanning)
+    // Text in photos (long-press to select and copy): ML Kit's bundled offline Latin model.
+    implementation(libs.mlkit.text.recognition)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.work.testing)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.junit)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+}

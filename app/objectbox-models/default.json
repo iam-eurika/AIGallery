@@ -1,0 +1,260 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:4202196628117484913",
+      "lastPropertyId": "19:4147846964981414496",
+      "name": "Photo",
+      "properties": [
+        {
+          "id": "1:3104132541287108660",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3579740465277664805",
+          "name": "mediaId",
+          "indexId": "1:6475377126655712990",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:8447282892551446581",
+          "name": "uri",
+          "indexId": "7:4262117225707585371",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:5140407545665879386",
+          "name": "dateTaken",
+          "indexId": "2:2595171801913874028",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:774790783403033223",
+          "name": "dateModified",
+          "type": 6
+        },
+        {
+          "id": "6:6589217477771639857",
+          "name": "width",
+          "type": 5
+        },
+        {
+          "id": "7:6669389332415225873",
+          "name": "height",
+          "type": 5
+        },
+        {
+          "id": "8:9207745157039708494",
+          "name": "album",
+          "type": 9
+        },
+        {
+          "id": "9:1848893231560388554",
+          "name": "mimeType",
+          "type": 9
+        },
+        {
+          "id": "10:7967472326273531537",
+          "name": "tint",
+          "type": 5
+        },
+        {
+          "id": "11:922677598550063472",
+          "name": "indexState",
+          "indexId": "3:2355751942757252596",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "12:2554768155884716270",
+          "name": "source",
+          "type": 5
+        },
+        {
+          "id": "13:5701680671253713623",
+          "name": "folderId",
+          "indexId": "8:3778894127862459712",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "14:4577302503756638666",
+          "name": "path",
+          "indexId": "9:115940910682983881",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "15:4864948214322593109",
+          "name": "isVideo",
+          "indexId": "10:169663298072267350",
+          "type": 1,
+          "flags": 8
+        },
+        {
+          "id": "16:2369041220221897908",
+          "name": "durationMs",
+          "type": 6
+        },
+        {
+          "id": "17:5252359692614129353",
+          "name": "framesDoneMs",
+          "type": 6
+        },
+        {
+          "id": "18:2591389489253134224",
+          "name": "soundState",
+          "indexId": "11:8782169328430128776",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "19:4147846964981414496",
+          "name": "soundDoneMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:8819753445976176172",
+      "lastPropertyId": "4:5278908881082238994",
+      "name": "PhotoVector",
+      "properties": [
+        {
+          "id": "1:2535917181580187890",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6430861652452312804",
+          "name": "photoId",
+          "indexId": "4:4560519743903304637",
+          "type": 6,
+          "flags": 40
+        },
+        {
+          "id": "3:2923641717245970920",
+          "name": "vector",
+          "indexId": "5:1870996486991805795",
+          "type": 28,
+          "flags": 8
+        },
+        {
+          "id": "4:5278908881082238994",
+          "name": "model",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "3:843983313588865052",
+      "lastPropertyId": "6:2182686278143800170",
+      "name": "Folder",
+      "properties": [
+        {
+          "id": "1:7025944157207175815",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2819741504400922445",
+          "name": "treeUri",
+          "indexId": "6:7937957727432195152",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:3283384454918678209",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "4:8461376946293487649",
+          "name": "addedAt",
+          "type": 6
+        },
+        {
+          "id": "5:2355146308990332587",
+          "name": "photoCount",
+          "type": 5
+        },
+        {
+          "id": "6:2182686278143800170",
+          "name": "lastScan",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "4:6576574602230052914",
+      "lastPropertyId": "7:7003547594088255239",
+      "name": "VideoMoment",
+      "properties": [
+        {
+          "id": "1:678659100418781246",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2724851782653166107",
+          "name": "photoId",
+          "indexId": "12:7895405297976737010",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:3626994858811722379",
+          "name": "kind",
+          "type": 5
+        },
+        {
+          "id": "4:7338790434658449651",
+          "name": "startMs",
+          "type": 6
+        },
+        {
+          "id": "5:47934968733481680",
+          "name": "endMs",
+          "type": 6
+        },
+        {
+          "id": "6:2028670187337274347",
+          "name": "vector",
+          "indexId": "13:6523022029386827377",
+          "type": 28,
+          "flags": 8
+        },
+        {
+          "id": "7:7003547594088255239",
+          "name": "model",
+          "type": 9
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "4:6576574602230052914",
+  "lastIndexId": "13:6523022029386827377",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}

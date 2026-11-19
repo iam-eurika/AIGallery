@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Camera snaps for circle search, and lifted objects shared via clipboard or share sheet. -->
+    <cache-path name="snaps" path="snaps/" />
+    <cache-path name="lifts" path="lifts/" />
+</paths>
