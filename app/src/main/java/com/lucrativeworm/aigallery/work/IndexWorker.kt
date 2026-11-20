@@ -66,6 +66,13 @@ class IndexWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 }
                 graph.indexer.runUntilDone()
                 updates.cancel()
+                // Back up before the worker ends and the process may be let go.
+                try {
+                    graph.backups.autoBackupIfDue(graph.indexer.pendingCount())
+                } catch (t: Throwable) {
+                    if (t is CancellationException) throw t
+                    Log.w(TAG, "Auto backup failed", t)
+                }
             }
             Result.success()
         } catch (c: CancellationException) {
