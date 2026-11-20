@@ -11,6 +11,23 @@ link when you tap it).
 - Kotlin + Jetpack Compose, minSdk 29, target/compile SDK 37, AGP 9.5
 - ABIs: `arm64-v8a`, `x86_64`
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/library.jpg" width="200" alt="Library grid with the one-time model download card"></td>
+    <td align="center"><img src="docs/screenshots/similar.jpg" width="200" alt="Similar photos to a selected photo, with the best match first"></td>
+    <td align="center"><img src="docs/screenshots/circle-search.jpg" width="200" alt="Circle to search: a lifted object and photos with something like it"></td>
+    <td align="center"><img src="docs/screenshots/qr-link.jpg" width="200" alt="QR code link preview sheet"></td>
+  </tr>
+  <tr>
+    <td align="center">Library</td>
+    <td align="center">Similar photos</td>
+    <td align="center">Circle to search</td>
+    <td align="center">QR link preview</td>
+  </tr>
+</table>
+
 ---
 
 ## Features
