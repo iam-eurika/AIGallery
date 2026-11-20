@@ -116,6 +116,14 @@ The default (**Auto**) uses Android's model when available, otherwise the bundle
 are tagged with the model that made them; switching models re-queues only the photos the new
 model hasn't indexed, since the two vector spaces can't be compared.
 
+**AICore's limits don't hold the app back.** Google notes that AICore needs Android 14 or
+higher, that its features vary by device and manufacturer, and that it can temporarily use extra
+storage during background updates. None of that is a requirement here: AICore is only an
+optional source of embeddings. The search index itself lives in the app's own ObjectBox
+database, and the bundled LiteRT-LM model runs on any supported phone from Android 10
+(minSdk 29) upward. If AICore is missing, unsupported or busy updating, Auto simply uses the
+bundled model, and search, similar photos and circle to search work the same.
+
 ### Design
 - **"Darkroom"** theme: warm ink-and-paper chrome so photos are the only saturated thing on
   screen, with one safelight-amber accent reserved for AI moments (search, indexing).
