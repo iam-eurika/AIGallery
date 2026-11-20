@@ -16,3 +16,8 @@ local.properties
 build/
 .kotlin
 *.dylib
+
+# Signing keys
+*.jks
+*.keystore
+*-signing-backup.zip

@@ -52,7 +52,7 @@ jobs:
           if-no-files-found: ignore
 
   build-release:
-    name: Build release APK
+    name: Build release APKs
     needs: test
     # PRs only run the tests; builds happen on main, tags, and manual runs.
     if: github.event_name != 'pull_request'
@@ -72,10 +72,10 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Build release APK
+      - name: Build release APKs
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Sign APK
+      - name: Sign APKs
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
@@ -83,36 +83,54 @@ jobs:
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          UNSIGNED=$(find app/build/outputs/apk/release -name '*-unsigned.apk' | head -n1)
-          OUT="AIGallery-${GITHUB_REF_NAME//\//-}.apk"
+          shopt -s nullglob
+          VERSION="${GITHUB_REF_NAME//\//-}"
+          # ABI splits produce app-<abi>-release-unsigned.apk, plus app-universal-release-unsigned.apk.
+          UNSIGNED=(app/build/outputs/apk/release/*-unsigned.apk)
+          if [ ${#UNSIGNED[@]} -eq 0 ]; then
+            echo "::error::No unsigned release APKs found."
+            exit 1
+          fi
 
           if [ -z "${KEYSTORE_BASE64}" ]; then
             if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
               echo "::error::RELEASE_KEYSTORE_BASE64 secret is not set; refusing to publish an unsigned release."
               exit 1
             fi
-            echo "::warning::No signing secrets set; uploading the unsigned APK."
-            cp "$UNSIGNED" "${OUT%.apk}-unsigned.apk"
+            echo "::warning::No signing secrets set; uploading the unsigned APKs."
+            for apk in "${UNSIGNED[@]}"; do
+              abi=$(basename "$apk" | sed -E 's/^app-(.+)-release-unsigned\.apk$/\1/')
+              cp "$apk" "AIGallery-${VERSION}-${abi}-unsigned.apk"
+            done
             exit 0
           fi
 
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.jks" \
-            --ks-pass env:KEYSTORE_PASSWORD \
-            --ks-key-alias "$KEY_ALIAS" \
-            --key-pass env:KEY_PASSWORD \
-            --out "$OUT" \
-            "$UNSIGNED"
-          "$BUILD_TOOLS/apksigner" verify --print-certs "$OUT"
-          rm -f "$RUNNER_TEMP/release.jks"
+          for apk in "${UNSIGNED[@]}"; do
+            abi=$(basename "$apk" | sed -E 's/^app-(.+)-release-unsigned\.apk$/\1/')
+            out="AIGallery-${VERSION}-${abi}.apk"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks "$RUNNER_TEMP/release.jks" \
+              --ks-pass env:KEYSTORE_PASSWORD \
+              --ks-key-alias "$KEY_ALIAS" \
+              --key-pass env:KEY_PASSWORD \
+              --out "$out" \
+              "$apk"
+            "$BUILD_TOOLS/apksigner" verify --print-certs "$out"
+          done
 
-      - name: Upload APK
+          sha256sum AIGallery-*.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v5
         with:
           name: release-apk
-          path: AIGallery-*.apk
+          path: |
+            AIGallery-*.apk
+            SHA256SUMS.txt
           if-no-files-found: error
 
   release:
@@ -124,7 +142,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Download APK
+      - name: Download APKs
         uses: actions/download-artifact@v5
         with:
           name: release-apk
@@ -132,5 +150,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: AIGallery-*.apk
+          files: |
+            AIGallery-*.apk
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true
           generate_release_notes: true
