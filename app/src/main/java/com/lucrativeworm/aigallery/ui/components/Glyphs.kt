@@ -33,6 +33,9 @@ enum class Glyph(val draw: DrawScope.(Color, Stroke) -> Unit) {
     Back({ c, s ->
         drawPath(Path().apply { moveTo(14.5f, 5.5f); lineTo(8f, 12f); lineTo(14.5f, 18.5f) }, c, style = s)
     }),
+    Forward({ c, s ->
+        drawPath(Path().apply { moveTo(9.5f, 5.5f); lineTo(16f, 12f); lineTo(9.5f, 18.5f) }, c, style = s)
+    }),
     Sparkle({ c, _ ->
         // Four-point star: the "AI" mark, used sparingly.
         val p = Path().apply {
