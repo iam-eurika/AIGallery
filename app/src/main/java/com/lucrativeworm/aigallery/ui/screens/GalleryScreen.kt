@@ -52,7 +52,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.layout.layout
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1294,6 +1297,10 @@ private fun SearchDock(
     val text = query?.text.orEmpty()
     val attached = query?.photos.orEmpty()
     val showSuggestions = focused && text.isEmpty()
+    // While the field has focus, back only lets go of it. Some keyboards (Samsung's hide-keyboard
+    // key, for one) send a back press when dismissed; without this it reached the app's handler
+    // and cleared the search, or closed the app when the query was empty.
+    BackHandler(enabled = focused) { focus.clearFocus() }
     // Back from the picker, put the cursor in the field so words can follow the photos.
     var picked by remember { mutableIntStateOf(0) }
     LaunchedEffect(picked) {
@@ -1317,10 +1324,19 @@ private fun SearchDock(
 
     Column(modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 14.dp, vertical = 12.dp)) {
         AnimatedVisibility(visible = showSuggestions, enter = fadeIn(tween(1)), exit = fadeOut(tween(120))) {
-            FlowRow(
-                Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            // One line that scrolls sideways, bleeding past the dock's padding to the screen edges.
+            val bleed = 14.dp
+            Row(
+                Modifier
+                    .padding(bottom = 12.dp)
+                    .layout { measurable, constraints ->
+                        val extra = (bleed * 2).roundToPx()
+                        val p = measurable.measure(constraints.copy(maxWidth = constraints.maxWidth + extra, minWidth = constraints.minWidth + extra))
+                        layout(p.width - extra, p.height) { p.place(-extra / 2, 0) }
+                    }
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = bleed),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SUGGESTIONS.forEachIndexed { i, s ->
                     Box(
