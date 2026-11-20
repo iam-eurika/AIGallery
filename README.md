@@ -202,3 +202,12 @@ adb push embeddinggemma-2-text-vision-440m.litertlm /data/local/tmp/aigallery/
 `shelved/CameraScreen.kt` is a CameraX viewfinder that brackets QR codes live and snaps photos
 for circle search. It was pulled from the build on 2026-11-18 and Snap uses the system camera
 again. See [shelved/README.md](shelved/README.md) for how to bring it back.
+
+---
+
+## License
+
+Copyright 2026 Eurika
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for
+attribution.
