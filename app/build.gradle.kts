@@ -128,6 +128,12 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     // Text in photos (long-press to select and copy): ML Kit's bundled offline Latin model.
     implementation(libs.mlkit.text.recognition)
+    // Spoken words in videos: Android's own speech-to-text through ML Kit GenAI where the phone
+    // offers it, and Vosk's offline recogniser as the fallback. Vosk's small English model is a
+    // separate download the user agrees to; it calls into native code through JNA's Android build.
+    implementation(libs.mlkit.genai.speech)
+    implementation(libs.vosk.android)
+    implementation(libs.jna) { artifact { type = "aar" } }
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

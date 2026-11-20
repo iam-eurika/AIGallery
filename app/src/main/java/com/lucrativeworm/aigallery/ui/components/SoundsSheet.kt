@@ -95,6 +95,75 @@ fun SoundsSheet(
     }
 }
 
+/**
+ * "Also find what people say?" Asked once sounds are on and no speech-to-text has been chosen.
+ * Each choice says what it downloads, and picking one is the go-ahead for that download; nothing
+ * is fetched otherwise. Dismissing defers it for this visit; "Not now" turns spoken words off
+ * (Settings can turn them on later).
+ *
+ * @param androidOffered this phone's Android offers its own speech model.
+ */
+@Composable
+fun SpeechSheet(
+    visible: Boolean,
+    androidOffered: Boolean,
+    sizeMb: Int,
+    onChoose: (com.lucrativeworm.aigallery.ml.SpeechChoice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = Theme.colors
+    val t = Theme.type
+    BackHandler(enabled = visible, onBack = onDismiss)
+    Box(Modifier.fillMaxSize()) {
+        AnimatedVisibility(visible, enter = fadeIn(tween(200)), exit = fadeOut(tween(160))) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)).pointerInput(Unit) { detectTapGestures { onDismiss() } })
+        }
+        AnimatedVisibility(
+            visible,
+            enter = slideInVertically(Motion.glide()) { it },
+            exit = slideOutVertically(tween(180)) { it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                    .background(c.raised)
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .navigationBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 20.dp),
+            ) {
+                Txt("Find what people say in videos?", t.title, c.ink)
+                Spacer(Modifier.height(8.dp))
+                Txt(
+                    "Sounds find a moment by what it sounds like. To search the words someone actually said, like \"happy birthday\" or a name, the app writes down speech in your videos, on this phone.",
+                    t.body, c.inkSoft,
+                )
+                Spacer(Modifier.height(18.dp))
+                Choice(
+                    title = "Automatic",
+                    body = if (androidOffered) "Android's speech model on this phone, which Android downloads and keeps up to date. More languages, better accuracy."
+                    else "This phone's Android doesn't offer a speech model, so this downloads the app's own (about $sizeMb MB, English).",
+                    primary = true,
+                ) { onChoose(com.lucrativeworm.aigallery.ml.SpeechChoice.AUTO) }
+                if (androidOffered) {
+                    Spacer(Modifier.height(10.dp))
+                    Choice(
+                        title = "The app's own model",
+                        body = "A one-time download of about $sizeMb MB, English only. Use this if you'd rather not rely on Android's.",
+                        primary = false,
+                    ) { onChoose(com.lucrativeworm.aigallery.ml.SpeechChoice.DOWNLOADED) }
+                }
+                Spacer(Modifier.height(10.dp))
+                Choice(
+                    title = "Not now",
+                    body = "Nothing is downloaded. Sounds still work, and you can turn this on in Settings.",
+                    primary = false,
+                ) { onChoose(com.lucrativeworm.aigallery.ml.SpeechChoice.OFF) }
+            }
+        }
+    }
+}
+
 @Composable
 private fun Choice(title: String, body: String, primary: Boolean, onClick: () -> Unit) {
     val c = Theme.colors

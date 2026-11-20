@@ -49,6 +49,10 @@ data class Photo(
     @Index var soundState: Int = IndexState.PENDING,
     /** How far into the soundtrack sound has been indexed. */
     var soundDoneMs: Long = 0,
+    /** See [IndexState]; whether this video's spoken words have been written down as [AudioText]. */
+    @Index var speechState: Int = IndexState.PENDING,
+    /** How far into the soundtrack speech has been transcribed, so a killed pass resumes. */
+    var speechDoneMs: Long = 0,
 )
 
 /** Queues this item to be indexed from scratch (new, edited, or indexed by another model). */
@@ -57,12 +61,16 @@ fun Photo.requeue() {
     framesDoneMs = 0
     soundState = IndexState.PENDING
     soundDoneMs = 0
+    speechState = IndexState.PENDING
+    speechDoneMs = 0
 }
 
 object Videos {
     /** Rows written before [Photo.isVideo] existed store null, which `equal(false)` never matches. */
     fun notVideo() = Photo_.isVideo.isNull.or(Photo_.isVideo.equal(false))
     fun video() = Photo_.isVideo.equal(true)
+    /** Rows written before [Photo.speechState] existed store null: still to transcribe. */
+    fun speechPending() = Photo_.speechState.isNull.or(Photo_.speechState.equal(IndexState.PENDING.toLong()))
 }
 
 object Source {
@@ -134,6 +142,21 @@ data class VideoMoment(
     override fun hashCode() = id.hashCode()
 }
 
+/**
+ * Words spoken in a video, as speech-to-text heard them: one row per utterance (speech between
+ * pauses), with where it is in the video. Search matches typed words against [text] directly, so
+ * "happy birthday" finds the video where someone says it, at that moment. Lowercase, no
+ * punctuation, the way the recogniser writes it.
+ */
+@Entity
+data class AudioText(
+    @Id var id: Long = 0,
+    @Index var photoId: Long = 0,
+    var startMs: Long = 0,
+    var endMs: Long = 0,
+    var text: String = "",
+)
+
 object MomentKind {
     const val FRAME = 0
     const val SOUND = 1
@@ -144,6 +167,7 @@ fun removeVectorsOf(ids: LongArray) {
     if (ids.isEmpty()) return
     Db.store.boxFor(PhotoVector::class.java).query(PhotoVector_.photoId.oneOf(ids)).build().use { it.remove() }
     Db.store.boxFor(VideoMoment::class.java).query(VideoMoment_.photoId.oneOf(ids)).build().use { it.remove() }
+    Db.store.boxFor(AudioText::class.java).query(AudioText_.photoId.oneOf(ids)).build().use { it.remove() }
 }
 
 const val EMBEDDING_DIMS = 768

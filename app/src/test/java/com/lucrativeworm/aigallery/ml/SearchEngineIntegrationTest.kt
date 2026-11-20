@@ -1,5 +1,6 @@
 package com.lucrativeworm.aigallery.ml
 
+import com.lucrativeworm.aigallery.data.AudioText
 import com.lucrativeworm.aigallery.data.MomentKind
 import com.lucrativeworm.aigallery.data.Photo
 import com.lucrativeworm.aigallery.data.PhotoVector
@@ -158,5 +159,24 @@ class SearchEngineIntegrationTest {
         assertEquals(0, db.store.boxFor<VideoMoment>().count())
         coEvery { embedder.embedText(any()) } returns axis(2)
         assertTrue(engine.search("sunset").none { it.photo.id == v })
+    }
+
+    @Test
+    fun `words said in a video rank first and point at when they were said`() = runTest {
+        db.store.boxFor<AudioText>().put(
+            listOf(
+                AudioText(photoId = v, startMs = 15_000, endMs = 18_000, text = "Happy birthday to you!"),
+                AudioText(photoId = c, startMs = 0, endMs = 2_000, text = "the birthday was happy"),
+                AudioText(photoId = d, startMs = 0, endMs = 2_000, text = "happily catching birthdays"),
+            )
+        )
+        coEvery { embedder.embedText(any()) } returns axis(0)
+        val hits = engine.search("happy birthday")
+        // Exact phrase first, then all words in any order; A (best by meaning) follows; D only
+        // contains the words inside longer ones, so it's not a spoken match.
+        assertEquals(listOf(v, c, a), hits.ids().take(3))
+        assertEquals(15_000L, hits.first().atMs)
+        assertTrue(hits.first().heard)
+        assertFalse(hits.take(3).any { it.photo.id == d })
     }
 }

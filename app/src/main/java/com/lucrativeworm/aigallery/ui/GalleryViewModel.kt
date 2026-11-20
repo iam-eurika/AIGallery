@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
@@ -175,6 +176,38 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Spoken words in videos: which speech-to-text the user chose, what this phone offers, downloads. */
+    val speech: StateFlow<com.lucrativeworm.aigallery.ml.SpeechStatus> = graph.models.speech
+
+    /**
+     * The user picked a speech-to-text option. [download] is their go-ahead to fetch what it needs
+     * right away (the prompt's buttons say so); from Settings the download is its own tap.
+     */
+    fun chooseSpeech(choice: com.lucrativeworm.aigallery.ml.SpeechChoice, download: Boolean = false) {
+        val before = graph.models.speech.value.choice
+        graph.models.setSpeechChoice(choice)
+        viewModelScope.launch {
+            if (choice == com.lucrativeworm.aigallery.ml.SpeechChoice.OFF && before != null && before != choice) {
+                withContext(Dispatchers.IO) { graph.indexer.forgetSpeech() }
+            }
+            graph.indexer.refreshCounts()
+            if (download && graph.models.speech.value.toFetch != null) downloadSpeech() else startIndexing()
+        }
+    }
+
+    private var speechJob: Job? = null
+
+    /** Fetches what the speech choice needs (only on the user's tap), then writes down what videos say. */
+    fun downloadSpeech() {
+        if (speechJob?.isActive == true) return
+        speechJob = viewModelScope.launch {
+            runCatching { graph.models.downloadSpeech() }
+                .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Speech model download failed", it) }
+            graph.indexer.refreshCounts()
+            startIndexing()
+        }
+    }
+
     /** Settings: switch models. Loads the new one if it's ready and re-indexes what it must. */
     fun setModelChoice(choice: ModelChoice) {
         if (graph.models.choice.value == choice) return
@@ -190,6 +223,15 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val indexSchedule: StateFlow<IndexSchedule?> = graph.indexer.schedule
+
+    /** Which kinds (photos, videos) the user wants prepared right now. */
+    val indexKinds: StateFlow<com.lucrativeworm.aigallery.ml.IndexKinds> = graph.indexer.kinds
+
+    fun setIndexKinds(kinds: com.lucrativeworm.aigallery.ml.IndexKinds) {
+        graph.indexer.setKinds(kinds)
+        // A running pass picks the change up by itself; otherwise start one for what's now ticked.
+        startIndexing()
+    }
 
     /**
      * True when indexing is ready to begin but the user hasn't said when it may run. Asked once,

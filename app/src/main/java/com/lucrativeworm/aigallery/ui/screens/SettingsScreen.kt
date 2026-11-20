@@ -39,6 +39,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -49,9 +50,14 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.lucrativeworm.aigallery.data.IndexBackups
+import com.lucrativeworm.aigallery.ml.IndexKinds
 import com.lucrativeworm.aigallery.ml.IndexSchedule
 import com.lucrativeworm.aigallery.ml.ModelChoice
 import com.lucrativeworm.aigallery.ml.ModelStore
+import com.lucrativeworm.aigallery.ml.SpeechChoice
+import com.lucrativeworm.aigallery.ml.SpeechEngine
+import com.lucrativeworm.aigallery.ml.SpeechModel
+import com.lucrativeworm.aigallery.ml.SpeechStatus
 import com.lucrativeworm.aigallery.ml.SystemModelStatus
 import com.lucrativeworm.aigallery.ml.Variant
 import com.lucrativeworm.aigallery.ui.components.Glyph
@@ -78,6 +84,8 @@ class SettingsUiState(
     val soundDownload: ModelStore.State? = null,
     /** The loaded model has an audio encoder. */
     val modelHears: Boolean = false,
+    /** Speech-to-text for spoken words: the choice, what this phone offers, any download. */
+    val speech: SpeechStatus = SpeechStatus(),
 )
 
 @Composable
@@ -88,8 +96,12 @@ fun SettingsScreen(
     onDownload: () -> Unit,
     indexSchedule: IndexSchedule? = null,
     onIndexSchedule: (IndexSchedule) -> Unit = {},
+    indexKinds: IndexKinds = IndexKinds(),
+    onIndexKinds: (IndexKinds) -> Unit = {},
     onSounds: (Boolean) -> Unit = {},
     onDownloadSoundModel: () -> Unit = {},
+    onSpeech: (SpeechChoice) -> Unit = {},
+    onDownloadSpeech: () -> Unit = {},
     backups: IndexBackups.State? = null,
     backupActions: BackupActions = BackupActions(),
 ) {
@@ -175,6 +187,39 @@ fun SettingsScreen(
                         missingText = "Search keeps working with the current model while the one that can hear downloads (about ${Variant.FULL.approxMb} MB). Then your library is prepared again with it.",
                     )
                 }
+                AnimatedVisibility(
+                    visible = state.sounds == true,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                ) {
+                    Column(Modifier.padding(top = 24.dp)) {
+                        Txt("Spoken words", t.label)
+                        Spacer(Modifier.height(4.dp))
+                        Txt("Write down what people say in videos, so you can search for the exact words.", t.caption, c.inkSoft)
+                        Spacer(Modifier.height(12.dp))
+                        SettingTile(
+                            value = speechChoiceName(state.speech.choice),
+                            status = speechStatus(state.speech),
+                            onClick = { open = Picker.SPEECH },
+                        )
+                        val sp = state.speech
+                        AnimatedVisibility(
+                            visible = sp.toFetch != null || sp.download != null,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                        ) {
+                            NeedsAction(
+                                sp.download ?: ModelStore.State.Missing(
+                                    if (sp.toFetch == SpeechEngine.ANDROID) ModelStore.Target.SYSTEM else ModelStore.Target.BUNDLED
+                                ),
+                                onDownloadSpeech,
+                                Modifier.padding(top = 16.dp),
+                                missingText = if (sp.toFetch == SpeechEngine.ANDROID) "Android will download its speech model for this phone. Nothing is fetched until you tap Download."
+                                else "The app's speech model is a one-time download of about ${SpeechModel.APPROX_MB} MB (English). Nothing is fetched until you tap Download.",
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(18.dp))
                 Txt(
                     "Switching between these changes which model your library is prepared with, so search fills back in over a while.",
@@ -201,6 +246,22 @@ fun SettingsScreen(
                         null -> "Nothing is prepared until you choose"
                     },
                     onClick = { open = Picker.SCHEDULE },
+                )
+                Spacer(Modifier.height(12.dp))
+                SettingTile(
+                    value = when {
+                        indexKinds.photos && indexKinds.videos -> "Photos and videos"
+                        indexKinds.photos -> "Photos only"
+                        indexKinds.videos -> "Videos only"
+                        else -> "Nothing for now"
+                    },
+                    status = when {
+                        indexKinds.photos && indexKinds.videos -> "Everything is prepared"
+                        indexKinds.photos -> "Videos wait until you tick them"
+                        indexKinds.videos -> "Photos wait until you tick them"
+                        else -> "Preparing is on hold"
+                    },
+                    onClick = { open = Picker.KINDS },
                 )
                 if (backups != null) {
                     Spacer(Modifier.height(32.dp))
@@ -255,6 +316,70 @@ fun SettingsScreen(
             )
         }
 
+        OptionSheet(open == Picker.SPEECH, "Spoken words", onDismiss = close) {
+            val sp = state.speech
+            Option(
+                title = "Automatic",
+                body = "Android's speech model when this phone offers it, otherwise the app's own download.",
+                status = if (sp.choice == SpeechChoice.AUTO) speechStatus(sp) else if (sp.androidOffered) "Would use Android's model" else "Would use the app's model",
+                selected = sp.choice == SpeechChoice.AUTO,
+                onClick = { onSpeech(SpeechChoice.AUTO); close() },
+            )
+            Spacer(Modifier.height(10.dp))
+            Option(
+                title = "Android's speech model",
+                body = "Provided by Android through ML Kit, which downloads and updates it. More languages and better accuracy. Needs Android 12 or later on a supported phone.",
+                status = androidSpeechStatus(sp.android),
+                selected = sp.choice == SpeechChoice.ANDROID,
+                enabled = sp.androidOffered || sp.choice == SpeechChoice.ANDROID,
+                onClick = { onSpeech(SpeechChoice.ANDROID); close() },
+            )
+            Spacer(Modifier.height(10.dp))
+            Option(
+                title = "The app's own model",
+                body = "A one-time download of about ${SpeechModel.APPROX_MB} MB that works on any phone. English only.",
+                status = if (sp.downloaded) "Downloaded" else "Not downloaded",
+                selected = sp.choice == SpeechChoice.DOWNLOADED,
+                onClick = { onSpeech(SpeechChoice.DOWNLOADED); close() },
+            )
+            Spacer(Modifier.height(10.dp))
+            Option(
+                title = "Off",
+                body = "Don't write down spoken words. Anything already written down is forgotten.",
+                status = "Spoken words aren't searchable",
+                selected = sp.choice == SpeechChoice.OFF,
+                onClick = { onSpeech(SpeechChoice.OFF); close() },
+            )
+        }
+
+        // Checkboxes: the sheet stays open while the user ticks, and closes on Done or a tap outside.
+        OptionSheet(open == Picker.KINDS, "What to prepare", onDismiss = close) {
+            Txt(
+                "Choose what gets made searchable. Unticking something keeps what's already done; it just waits until you tick it again.",
+                t.caption, c.inkSoft,
+            )
+            Spacer(Modifier.height(14.dp))
+            Option(
+                title = "Photos",
+                body = "Quick to prepare, a fraction of a second each.",
+                status = if (indexKinds.photos) "Being prepared" else "On hold",
+                selected = indexKinds.photos,
+                role = Role.Checkbox,
+                onClick = { onIndexKinds(indexKinds.copy(photos = !indexKinds.photos)) },
+            )
+            Spacer(Modifier.height(10.dp))
+            Option(
+                title = "Videos",
+                body = "Much slower: every scene, and with sounds on, what's heard and said.",
+                status = if (indexKinds.videos) "Being prepared" else "On hold",
+                selected = indexKinds.videos,
+                role = Role.Checkbox,
+                onClick = { onIndexKinds(indexKinds.copy(videos = !indexKinds.videos)) },
+            )
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { Pill("Done", close) }
+        }
+
         OptionSheet(open == Picker.SCHEDULE, "When to prepare photos", onDismiss = close) {
             Option(
                 title = "While I'm asleep",
@@ -275,7 +400,33 @@ fun SettingsScreen(
     }
 }
 
-private enum class Picker { MODEL, SOUNDS, SCHEDULE }
+private enum class Picker { MODEL, SOUNDS, SPEECH, SCHEDULE, KINDS }
+
+private fun speechChoiceName(c: SpeechChoice?): String = when (c) {
+    SpeechChoice.AUTO -> "Automatic"
+    SpeechChoice.ANDROID -> "Android's speech model"
+    SpeechChoice.DOWNLOADED -> "The app's own model"
+    SpeechChoice.OFF -> "Off"
+    null -> "Not chosen yet"
+}
+
+private fun speechStatus(s: SpeechStatus): String = when {
+    s.choice == null -> "Nothing is downloaded until you choose"
+    s.choice == SpeechChoice.OFF -> "Spoken words aren't searchable"
+    s.download is ModelStore.State.Downloading -> "Downloading…"
+    s.engine == SpeechEngine.ANDROID -> "On, using Android's speech model"
+    s.engine == SpeechEngine.DOWNLOADED -> "On, using the app's model"
+    s.choice == SpeechChoice.ANDROID && !s.androidOffered -> "Not available on this phone. Choose another option"
+    else -> "Needs a download"
+}
+
+private fun androidSpeechStatus(s: SystemModelStatus): String = when (s) {
+    SystemModelStatus.CHECKING -> "Checking this phone…"
+    SystemModelStatus.AVAILABLE -> "Ready on this phone"
+    SystemModelStatus.DOWNLOADABLE -> "Available, Android needs to download it"
+    SystemModelStatus.DOWNLOADING -> "Android is downloading it"
+    else -> "Not available on this phone"
+}
 
 /** A setting with several choices: shows the current one, and opens a sheet to change it. */
 @Composable
@@ -405,12 +556,40 @@ private fun Option(
             .padding(16.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(
-            Modifier.padding(top = 2.dp).size(20.dp).clip(CircleShape)
-                .border(1.75.dp, if (selected) c.safelight else c.inkFaint, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(10.dp * dot).clip(CircleShape).background(c.safelight))
+        if (role == Role.Checkbox) {
+            // A ticked box on the left, for choices that can be combined.
+            val box = RoundedCornerShape(6.dp)
+            val tick = c.raised
+            Box(
+                Modifier.padding(top = 2.dp).size(20.dp).clip(box)
+                    .background(c.safelight.copy(alpha = dot))
+                    .border(1.75.dp, if (selected) c.safelight else c.inkFaint, box)
+                    .drawBehind {
+                        if (dot > 0f) {
+                            val w = size.width
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(w * 0.24f, w * 0.52f)
+                                lineTo(w * 0.43f, w * 0.70f)
+                                lineTo(w * 0.77f, w * 0.32f)
+                            }
+                            drawPath(
+                                path, tick.copy(alpha = dot),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                    width = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                ),
+                            )
+                        }
+                    },
+            )
+        } else {
+            Box(
+                Modifier.padding(top = 2.dp).size(20.dp).clip(CircleShape)
+                    .border(1.75.dp, if (selected) c.safelight else c.inkFaint, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.size(10.dp * dot).clip(CircleShape).background(c.safelight))
+            }
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {

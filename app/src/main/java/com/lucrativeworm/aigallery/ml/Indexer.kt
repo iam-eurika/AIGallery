@@ -8,6 +8,8 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
+import com.lucrativeworm.aigallery.data.AudioText
+import com.lucrativeworm.aigallery.data.AudioText_
 import com.lucrativeworm.aigallery.data.Db
 import com.lucrativeworm.aigallery.data.IndexState
 import com.lucrativeworm.aigallery.data.MomentKind
@@ -42,10 +44,18 @@ enum class IndexSchedule {
 }
 
 /**
+ * Which kinds of items the user wants prepared right now. Unticking one doesn't forget anything
+ * already indexed; it just stops new work on that kind until it's ticked again, so a big library
+ * can be done photos first and videos later (or the other way round).
+ */
+data class IndexKinds(val photos: Boolean = true, val videos: Boolean = true)
+
+/**
  * Walks every [IndexState.PENDING] photo, newest first (so what you just shot is searchable
  * first), embeds a small thumbnail with EmbeddingGemma 2 and stores the vector in ObjectBox.
  * Then videos, which cost far more: their frames become [VideoMoment]s, and when [soundsWanted]
- * and the model can hear, so do their soundtracks.
+ * and the model can hear, so do their soundtracks. With sounds on and the speech model downloaded,
+ * what's said in each video is also written down as [AudioText] for word-for-word search.
  */
 class Indexer(
     private val context: Context,
@@ -53,6 +63,8 @@ class Indexer(
     private val scope: CoroutineScope,
     /** The user's answer to "make sounds in videos searchable?" (null = not asked yet = no). */
     private val soundsWanted: () -> Boolean = { false },
+    /** Speech-to-text for spoken words; does nothing until its model has been downloaded. */
+    private val speech: Speech? = null,
 ) {
     data class Progress(val indexed: Int = 0, val total: Int = 0, val running: Boolean = false) {
         val fraction: Float get() = if (total == 0) 1f else indexed.toFloat() / total
@@ -62,6 +74,7 @@ class Indexer(
     private val photos = Db.store.boxFor<Photo>()
     private val vectors = Db.store.boxFor<PhotoVector>()
     private val moments = Db.store.boxFor<VideoMoment>()
+    private val audioTexts = Db.store.boxFor<AudioText>()
     private val videoIndexer = VideoIndexer(context)
     private val _progress = MutableStateFlow(Progress())
     val progress: StateFlow<Progress> = _progress.asStateFlow()
@@ -102,26 +115,61 @@ class Indexer(
         _schedule.value = schedule
     }
 
+    private val _kinds = MutableStateFlow(
+        IndexKinds(photos = prefs.getBoolean(KEY_PHOTOS, true), videos = prefs.getBoolean(KEY_VIDEOS, true))
+    )
+    /** What the user wants prepared; see [IndexKinds]. A running pass follows changes item by item. */
+    val kinds: StateFlow<IndexKinds> = _kinds.asStateFlow()
+
+    fun setKinds(kinds: IndexKinds) {
+        prefs.edit().putBoolean(KEY_PHOTOS, kinds.photos).putBoolean(KEY_VIDEOS, kinds.videos).apply()
+        _kinds.value = kinds
+        refreshCounts()
+    }
+
     /** Sound indexing runs only when the user wants it and the loaded model has an audio encoder. */
     private fun soundsActive() = soundsWanted() && embedder.supportsAudio
 
+    /** Spoken words are written down when the user wants sounds and the speech model is here. */
+    private fun speechActive() = soundsWanted() && speech?.isAvailable == true
+
     fun refreshCounts() {
-        val items = photos.count().toInt()
+        val k = _kinds.value
+        val stills = if (k.photos) photos.query(Videos.notVideo()).build().use { it.count().toInt() } else 0
+        val allVideos = if (k.videos) photos.query(Videos.video()).build().use { it.count().toInt() } else 0
+        val items = stills + allVideos
         // With sounds on, each video's soundtrack is a second piece of work.
-        val sounds = if (soundsActive()) photos.query(Videos.video()).build().use { it.count().toInt() } else 0
-        val total = items + sounds
+        val videos = if (soundsActive() || speechActive()) allVideos else 0
+        val sounds = if (soundsActive()) videos else 0
+        // And, with the speech model here, so is writing down what's said in it.
+        val spoken = if (speechActive()) videos else 0
+        val total = items + sounds + spoken
         _progress.update { it.copy(indexed = total - pendingCount(), total = total) }
     }
 
     fun pendingCount(): Int {
-        val visual = photos.query(Photo_.indexState.equal(IndexState.PENDING.toLong())).build().use { it.count().toInt() }
+        val k = _kinds.value
+        if (!k.photos && !k.videos) return 0
+        val pendingVisual = Photo_.indexState.equal(IndexState.PENDING.toLong())
+        val visual = when {
+            k.photos && k.videos -> photos.query(pendingVisual)
+            k.photos -> photos.query(pendingVisual.and(Videos.notVideo()))
+            else -> photos.query(pendingVisual.and(Videos.video()))
+        }.build().use { it.count().toInt() }
+        // Everything below is video work.
+        if (!k.videos) return visual
         // Every soundtrack still to do, including those of videos whose pictures aren't done yet.
         val sound = if (soundsActive()) photos.query(
             Videos.video()
                 .and(Photo_.soundState.equal(IndexState.PENDING.toLong()))
                 .and(Photo_.indexState.notEqual(IndexState.FAILED.toLong()))
         ).build().use { it.count().toInt() } else 0
-        return visual + sound
+        val spoken = if (speechActive()) photos.query(
+            Videos.video()
+                .and(Videos.speechPending())
+                .and(Photo_.indexState.notEqual(IndexState.FAILED.toLong()))
+        ).build().use { it.count().toInt() } else 0
+        return visual + sound + spoken
     }
 
     /**
@@ -131,8 +179,26 @@ class Indexer(
     fun forgetSounds() {
         Db.store.runInTx {
             moments.query(VideoMoment_.kind.equal(MomentKind.SOUND.toLong())).build().use { it.remove() }
+            audioTexts.removeAll()
             val videos = photos.query(Videos.video()).build().use { it.find() }
-            videos.forEach { it.soundState = IndexState.PENDING; it.soundDoneMs = 0 }
+            videos.forEach {
+                it.soundState = IndexState.PENDING; it.soundDoneMs = 0
+                it.speechState = IndexState.PENDING; it.speechDoneMs = 0
+            }
+            photos.put(videos)
+        }
+        refreshCounts()
+    }
+
+    /**
+     * Spoken words were turned off: forget every transcript, and queue videos again so turning it
+     * back on later picks them up.
+     */
+    fun forgetSpeech() {
+        Db.store.runInTx {
+            audioTexts.removeAll()
+            val videos = photos.query(Videos.video()).build().use { it.find() }
+            videos.forEach { it.speechState = IndexState.PENDING; it.speechDoneMs = 0 }
             photos.put(videos)
         }
         refreshCounts()
@@ -187,14 +253,21 @@ class Indexer(
             _progress.update { it.copy(running = true) }
             try {
                 while (true) {
-                    val batch = pendingQuery().use { it.find(0, BATCH.toLong()) }
+                    // Checked every round, so ticking or unticking a kind takes effect at once.
+                    val kinds = _kinds.value
+                    val batch = if (kinds.photos) pendingQuery().use { it.find(0, BATCH.toLong()) } else emptyList()
                     if (batch.isEmpty()) {
+                        if (!kinds.videos) break
                         // Photos are done: then one video at a time, its pictures before any sound.
                         val video = pendingVideoQuery().use { it.findFirst() }
                         if (video != null) { indexVideoFrames(video); continue }
                         if (soundsActive()) {
                             val heard = pendingSoundQuery().use { it.findFirst() }
                             if (heard != null) { indexVideoSound(heard); continue }
+                        }
+                        if (speechActive()) {
+                            val spoken = pendingSpeechQuery().use { it.findFirst() }
+                            if (spoken != null) { transcribeVideo(spoken); continue }
                         }
                         break
                     }
@@ -230,6 +303,8 @@ class Indexer(
                     }
                 }
             } finally {
+                // The recogniser holds a lot of memory; let it go until there's speech to do again.
+                speech?.close()
                 _progress.update { it.copy(running = false) }
             }
         }
@@ -320,6 +395,49 @@ class Indexer(
         _progress.update { it.copy(indexed = (it.indexed + 1).coerceAtMost(it.total)) }
     }
 
+    /** Writes down what's said in one video, an utterance at a time, as [AudioText] rows. */
+    private suspend fun transcribeVideo(video: Photo) {
+        val speech = speech ?: return
+        try {
+            if (video.speechDoneMs == 0L) {
+                audioTexts.query(AudioText_.photoId.equal(video.id)).build().use { it.remove() }
+            }
+            val pending = ArrayList<AudioText>()
+            fun commit(doneMs: Long) {
+                video.speechDoneMs = doneMs
+                Db.store.runInTx {
+                    audioTexts.put(pending)
+                    photos.put(video)
+                }
+                pending.clear()
+            }
+            var since = SystemClock.uptimeMillis()
+            speech.transcribe(
+                video, video.speechDoneMs.coerceAtLeast(0), videoIndexer,
+                step = {
+                    lastWorkMs = SystemClock.uptimeMillis() - since
+                    pace()
+                    since = SystemClock.uptimeMillis()
+                },
+                onUtterance = { text ->
+                    pending += text
+                    if (pending.size >= SPEECH_COMMIT_EVERY) commit(text.endMs)
+                },
+            )
+            commit(maxOf(video.durationMs, pending.lastOrNull()?.endMs ?: 0L))
+            // No audio track counts as done: nobody can have said anything.
+            video.speechState = IndexState.DONE
+            Log.d(TAG, "Transcribed video ${video.id}")
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not transcribe ${video.uri}", t)
+            video.speechState = IndexState.FAILED
+        }
+        photos.put(video)
+        _progress.update { it.copy(indexed = (it.indexed + 1).coerceAtMost(it.total)) }
+    }
+
     private fun lastMoment(videoId: Long, kind: Int): VideoMoment? =
         moments.query(VideoMoment_.photoId.equal(videoId).and(VideoMoment_.kind.equal(kind.toLong())))
             .orderDesc(VideoMoment_.startMs).build().use { it.findFirst() }
@@ -376,6 +494,13 @@ class Indexer(
             .and(Photo_.soundState.equal(IndexState.PENDING.toLong()))
     ).order(Photo_.dateTaken, QueryBuilder.DESCENDING).build()
 
+    /** Videos whose pictures are indexed but whose spoken words aren't written down yet. */
+    private fun pendingSpeechQuery() = photos.query(
+        Photo_.indexState.equal(IndexState.DONE.toLong())
+            .and(Videos.video())
+            .and(Videos.speechPending())
+    ).order(Photo_.dateTaken, QueryBuilder.DESCENDING).build()
+
     private suspend fun loadThumbnail(photo: Photo): Bitmap = withContext(Dispatchers.IO) {
         context.contentResolver.loadThumbnail(Uri.parse(photo.uri), Size(THUMB, THUMB), null)
     }
@@ -387,8 +512,11 @@ class Indexer(
         const val TAG = "Indexer"
         const val KEY_PAUSED = "paused"
         const val KEY_SCHEDULE = "schedule"
+        const val KEY_PHOTOS = "index_photos"
+        const val KEY_VIDEOS = "index_videos"
         // Small batches: work done before the process is killed is only kept once committed.
         const val BATCH = 12
+        const val SPEECH_COMMIT_EVERY = 4
         const val TOUCH_QUIET_MS = 1_500L
         const val MIN_REST_MS = 150L
         // EmbeddingGemma 2 patchifies to a fixed vision-token budget, so a larger input buys nothing.

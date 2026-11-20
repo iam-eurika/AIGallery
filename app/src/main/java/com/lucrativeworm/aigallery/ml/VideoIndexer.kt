@@ -128,6 +128,83 @@ class VideoIndexer(private val context: Context) {
         embed: suspend (FloatArray, Int) -> Pair<FloatArray, String>,
         commit: Commit,
     ): Boolean {
+        val startMs = video.soundDoneMs.coerceAtLeast(0)
+        val window = FloatArray(RATE * WINDOW_MS.toInt() / 1000)
+        var filled = 0
+        var windowStartMs = -1L
+        var windowIndex = 0
+        var every = 1
+        var durationMs = 0L
+        var current = resumeFrom
+        val dirty = ArrayList<VideoMoment>()
+        var lastDoneMs = startMs
+
+        suspend fun finishWindow() {
+            val start = windowStartMs
+            val end = start + WINDOW_MS
+            val take = windowIndex % every == 0
+            windowIndex++
+            filled = 0
+            windowStartMs = -1
+            lastDoneMs = end
+            if (!take || rms(window) < SILENCE) return
+            pace()
+            val (vector, model) = embed(window.copyOf(), RATE)
+            val prev = current
+            if (prev != null && prev.model == model && prev.endMs >= start - 1 && dot(prev.vector, vector) > SOUND_MERGE) {
+                prev.endMs = end
+                if (prev !in dirty) dirty += prev
+            } else {
+                current = VideoMoment(photoId = video.id, kind = MomentKind.SOUND, startMs = start, endMs = end, vector = vector, model = model)
+                    .also { dirty += it }
+            }
+            if (dirty.size >= COMMIT_EVERY) {
+                commit.save(dirty.toList(), end)
+                dirty.clear()
+            }
+        }
+
+        val hasAudio = streamAudio(
+            video, startMs,
+            onStart = { duration ->
+                durationMs = duration
+                // Long recordings: embed every k-th window rather than all of them.
+                val windows = ceil(duration / WINDOW_MS.toDouble()).toInt().coerceAtLeast(1)
+                every = ceil(windows / MAX_SOUNDS.toDouble()).toInt().coerceAtLeast(1)
+            },
+        ) { out, count, chunkStartMs ->
+            var k = 0
+            while (k < count) {
+                if (windowStartMs < 0) windowStartMs = max(startMs, chunkStartMs + k * 1000L / RATE)
+                val n = minOf(count - k, window.size - filled)
+                System.arraycopy(out, k, window, filled, n)
+                filled += n
+                k += n
+                if (filled == window.size) finishWindow()
+            }
+        }
+        if (!hasAudio) return false
+        if (filled > window.size / 2 && windowStartMs >= 0) {
+            window.fill(0f, filled)
+            finishWindow()
+        }
+        commit.save(dirty, max(lastDoneMs, durationMs))
+        return true
+    }
+
+    /**
+     * Decodes [video]'s soundtrack from [startMs] on and hands it to [sink] as [RATE] Hz mono
+     * floats in -1..1: `sink(samples, count, chunkStartMs)`, where [chunkStartMs] is when the
+     * decoder chunk the samples came from starts (it may begin a little before [startMs]: decoding
+     * resumes from the previous sync frame). [onStart] gets the soundtrack's length first.
+     * Returns false when the video has no audio track.
+     */
+    suspend fun streamAudio(
+        video: Photo,
+        startMs: Long,
+        onStart: (durationMs: Long) -> Unit = {},
+        sink: suspend (FloatArray, Int, Long) -> Unit,
+    ): Boolean {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -140,12 +217,8 @@ class VideoIndexer(private val context: Context) {
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             val durationMs = video.durationMs.takeIf { it > 0 }
                 ?: (if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else 0L)
-            val startMs = video.soundDoneMs.coerceAtLeast(0)
+            onStart(durationMs)
             if (startMs > 0) extractor.seekTo(startMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-
-            // Long recordings: embed every k-th window rather than all of them.
-            val windows = ceil(durationMs / WINDOW_MS.toDouble()).toInt().coerceAtLeast(1)
-            val every = ceil(windows / MAX_SOUNDS.toDouble()).toInt().coerceAtLeast(1)
 
             val c = MediaCodec.createDecoderByType(mime).also { codec = it }
             c.configure(format, null, null, 0)
@@ -155,38 +228,6 @@ class VideoIndexer(private val context: Context) {
             var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             var floatPcm = false
             var resampler = Resampler(inRate, RATE)
-            val window = FloatArray(RATE * WINDOW_MS.toInt() / 1000)
-            var filled = 0
-            var windowStartMs = -1L
-            var windowIndex = 0
-            var current = resumeFrom
-            val dirty = ArrayList<VideoMoment>()
-            var lastDoneMs = startMs
-
-            suspend fun finishWindow() {
-                val start = windowStartMs
-                val end = start + WINDOW_MS
-                val take = windowIndex % every == 0
-                windowIndex++
-                filled = 0
-                windowStartMs = -1
-                lastDoneMs = end
-                if (!take || rms(window) < SILENCE) return
-                pace()
-                val (vector, model) = embed(window.copyOf(), RATE)
-                val prev = current
-                if (prev != null && prev.model == model && prev.endMs >= start - 1 && dot(prev.vector, vector) > SOUND_MERGE) {
-                    prev.endMs = end
-                    if (prev !in dirty) dirty += prev
-                } else {
-                    current = VideoMoment(photoId = video.id, kind = MomentKind.SOUND, startMs = start, endMs = end, vector = vector, model = model)
-                        .also { dirty += it }
-                }
-                if (dirty.size >= COMMIT_EVERY) {
-                    commit.save(dirty.toList(), end)
-                    dirty.clear()
-                }
-            }
 
             val info = MediaCodec.BufferInfo()
             var inputDone = false
@@ -247,27 +288,13 @@ class VideoIndexer(private val context: Context) {
                             // Samples from before the resume point (we seek to the previous sync frame).
                             if (chunkStartMs + frames * 1000L / inRate > startMs) {
                                 val count = resampler.process(mono, frames)
-                                val out = resampler.out
-                                var k = 0
-                                while (k < count) {
-                                    if (windowStartMs < 0) windowStartMs = max(startMs, chunkStartMs + k * 1000L / RATE)
-                                    val n = minOf(count - k, window.size - filled)
-                                    System.arraycopy(out, k, window, filled, n)
-                                    filled += n
-                                    k += n
-                                    if (filled == window.size) finishWindow()
-                                }
+                                if (count > 0) sink(resampler.out, count, chunkStartMs)
                             }
                         }
                         c.releaseOutputBuffer(o, false)
                     }
                 }
             }
-            if (filled > window.size / 2 && windowStartMs >= 0) {
-                window.fill(0f, filled)
-                finishWindow()
-            }
-            commit.save(dirty, max(lastDoneMs, durationMs))
             return true
         } finally {
             runCatching { codec?.stop() }

@@ -223,6 +223,7 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
     val indexing by vm.indexing.collectAsStateWithLifecycle()
     val indexingPaused by vm.indexingPaused.collectAsStateWithLifecycle()
     val indexSchedule by vm.indexSchedule.collectAsStateWithLifecycle()
+    val indexKinds by vm.indexKinds.collectAsStateWithLifecycle()
     val needsIndexSchedule by vm.needsIndexSchedule.collectAsStateWithLifecycle()
     // "Not now" on the question holds for this visit; it's asked again next time.
     var indexScheduleDeferred by rememberSaveable { mutableStateOf(false) }
@@ -409,6 +410,7 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
                     val soundMissing by vm.soundModelMissing.collectAsStateWithLifecycle()
                     val soundDownload by vm.soundDownload.collectAsStateWithLifecycle()
                     val backups by vm.backups.collectAsStateWithLifecycle()
+                    val speechNow by vm.speech.collectAsStateWithLifecycle()
                     SettingsScreen(
                         state = SettingsUiState(
                             choice, model, system, active, remember(model, soundDownload) { vm.bundledDownloaded() },
@@ -416,14 +418,19 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
                             soundModelMissing = soundMissing,
                             soundDownload = soundDownload,
                             modelHears = remember(active) { vm.modelHears() },
+                            speech = speechNow,
                         ),
                         onBack = { pop() },
                         onChoose = vm::setModelChoice,
                         onDownload = onDownload,
                         indexSchedule = indexSchedule,
                         onIndexSchedule = vm::setIndexSchedule,
+                        indexKinds = indexKinds,
+                        onIndexKinds = vm::setIndexKinds,
                         onSounds = { on -> if (on != sounds) vm.setSounds(on) },
                         onDownloadSoundModel = vm::downloadSoundModel,
+                        onSpeech = { vm.chooseSpeech(it) },
+                        onDownloadSpeech = vm::downloadSpeech,
                         backups = backups,
                         backupActions = remember {
                             BackupActions(
@@ -493,8 +500,23 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
         },
     )
 
+    // Spoken words: asked once sounds are on and Android has said whether it offers its own
+    // speech model. Each answer is the go-ahead for exactly what it downloads.
+    val speech by vm.speech.collectAsStateWithLifecycle()
+    var speechDeferred by rememberSaveable { mutableStateOf(false) }
+    val speechVisible = sounds == true && speech.choice == null &&
+        speech.android != com.lucrativeworm.aigallery.ml.SystemModelStatus.CHECKING &&
+        !speechDeferred && !soundsVisible && (top == null || top is Configuring)
+    com.lucrativeworm.aigallery.ui.components.SpeechSheet(
+        visible = speechVisible,
+        androidOffered = speech.androidOffered,
+        sizeMb = com.lucrativeworm.aigallery.ml.SpeechModel.APPROX_MB,
+        onChoose = { vm.chooseSpeech(it, download = true) },
+        onDismiss = { speechDeferred = true },
+    )
+
     com.lucrativeworm.aigallery.ui.components.IndexScheduleSheet(
-        visible = needsIndexSchedule && !indexScheduleDeferred && top == null && !soundsVisible,
+        visible = needsIndexSchedule && !indexScheduleDeferred && top == null && !soundsVisible && !speechVisible,
         onChoose = vm::setIndexSchedule,
         onDismiss = { indexScheduleDeferred = true },
     )

@@ -9,6 +9,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import com.google.mlkit.genai.common.DownloadStatus
+import com.google.mlkit.genai.common.FeatureStatus
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -53,6 +56,17 @@ enum class Variant(val fileName: String, val id: String, val repo: String, val s
     );
 
     val url get() = "https://huggingface.co/litert-community/$repo/resolve/main/$fileName"
+}
+
+/**
+ * Vosk's small offline English speech-to-text model (Apache 2.0), for spoken words in videos. A zip
+ * from alphacephei.com, unpacked into the models folder.
+ */
+object SpeechModel {
+    const val NAME = "vosk-model-small-en-us-0.15"
+    const val URL = "https://alphacephei.com/vosk/models/$NAME.zip"
+    const val SHA256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+    const val APPROX_MB = 41
 }
 
 /**
@@ -247,6 +261,121 @@ class ModelStore(private val context: Context) {
         locate()
     }
 
+    private val speechDir = File(modelDir, SpeechModel.NAME)
+
+    /** The unpacked speech-to-text model, or null until it's been downloaded. */
+    fun speechModelDir(): File? = speechDir.takeIf { File(it, SPEECH_READY).exists() }
+
+    /** Android's own speech-to-text (ML Kit GenAI), preferred where the phone offers it. */
+    val googleSpeech = GoogleSpeech()
+
+    private val _speech = MutableStateFlow(
+        SpeechStatus(
+            choice = prefs.getString(KEY_SPEECH, null)?.let { runCatching { SpeechChoice.valueOf(it) }.getOrNull() },
+            downloaded = speechModelDir() != null,
+        )
+    )
+    /**
+     * Speech-to-text for spoken words in videos: the user's choice (null until asked), what this
+     * phone offers, and any download. Nothing is downloaded until the user asks for it.
+     */
+    val speech: StateFlow<SpeechStatus> = _speech.asStateFlow()
+
+    fun setSpeechChoice(choice: SpeechChoice) {
+        prefs.edit().putString(KEY_SPEECH, choice.name).apply()
+        _speech.update { it.copy(choice = choice) }
+    }
+
+    /** Asks Android whether it offers its speech model on this phone. */
+    suspend fun checkAndroidSpeech() {
+        val status = when (googleSpeech.status()) {
+            FeatureStatus.AVAILABLE -> SystemModelStatus.AVAILABLE
+            FeatureStatus.DOWNLOADABLE -> SystemModelStatus.DOWNLOADABLE
+            FeatureStatus.DOWNLOADING -> SystemModelStatus.DOWNLOADING
+            else -> SystemModelStatus.UNSUPPORTED
+        }
+        _speech.update { it.copy(android = status) }
+    }
+
+    /**
+     * Downloads whatever the user's speech choice still needs: Android's model through ML Kit, or
+     * the app's own. Only ever called from the user's own tap.
+     */
+    suspend fun downloadSpeech() {
+        val s = _speech.value.download
+        if (s is State.Downloading || s == State.Verifying) return
+        when (_speech.value.toFetch) {
+            SpeechEngine.ANDROID -> downloadAndroidSpeech()
+            SpeechEngine.DOWNLOADED -> downloadSpeechModel()
+            null -> {}
+        }
+    }
+
+    private suspend fun downloadAndroidSpeech() {
+        val publish: (State?) -> Unit = { st -> _speech.update { it.copy(download = st) } }
+        try {
+            var total = 0L
+            publish(State.Downloading(0, 0, Target.SYSTEM))
+            googleSpeech.download().collect { d ->
+                when (d) {
+                    is DownloadStatus.DownloadStarted -> { total = d.bytesToDownload; publish(State.Downloading(0, total, Target.SYSTEM)) }
+                    is DownloadStatus.DownloadProgress -> publish(State.Downloading(d.totalBytesDownloaded, total, Target.SYSTEM))
+                    is DownloadStatus.DownloadFailed -> throw d.e
+                    else -> {}
+                }
+            }
+            checkAndroidSpeech()
+            publish(null)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            publish(State.Failed(t.message ?: "Android couldn't download its speech model", Target.SYSTEM))
+            throw t
+        }
+    }
+
+    /** Downloads and unpacks the app's own speech-to-text model. */
+    private suspend fun downloadSpeechModel() {
+        if (speechModelDir() != null) { _speech.update { it.copy(downloaded = true) }; return }
+        val publish: (State) -> Unit = { st -> _speech.update { it.copy(download = st) } }
+        val zip = downloadFile(SpeechModel.URL, "${SpeechModel.NAME}.zip", SpeechModel.SHA256, publish)
+        try {
+            publish(State.Verifying)
+            withContext(Dispatchers.IO) { unpack(zip) }
+        } catch (t: Throwable) {
+            if (t !is kotlinx.coroutines.CancellationException) publish(State.Failed(t.message ?: "Couldn't unpack the speech model"))
+            throw t
+        } finally {
+            zip.delete()
+        }
+        _speech.update { it.copy(downloaded = true, download = null) }
+    }
+
+    /** Unzips the model, dropping the archive's top folder, then moves it into place. */
+    private fun unpack(zip: File) {
+        val tmp = File(modelDir, "${SpeechModel.NAME}.tmp")
+        tmp.deleteRecursively()
+        tmp.mkdirs()
+        val root = tmp.canonicalPath + File.separator
+        java.util.zip.ZipInputStream(zip.inputStream().buffered()).use { input ->
+            while (true) {
+                val entry = input.nextEntry ?: break
+                val name = entry.name.substringAfter('/', "")
+                if (name.isEmpty()) continue
+                val out = File(tmp, name)
+                // Never write outside the target folder, whatever the archive says.
+                if (!out.canonicalPath.startsWith(root)) throw IOException("Bad entry in speech model: ${entry.name}")
+                if (entry.isDirectory) { out.mkdirs(); continue }
+                out.parentFile?.mkdirs()
+                out.outputStream().use { input.copyTo(it) }
+            }
+        }
+        if (!File(tmp, "am/final.mdl").exists()) throw IOException("The speech model download is incomplete")
+        File(tmp, SPEECH_READY).writeText(SpeechModel.NAME)
+        speechDir.deleteRecursively()
+        if (!tmp.renameTo(speechDir)) throw IOException("Could not move the speech model into place")
+    }
+
     private suspend fun downloadSystem(): Source {
         try {
             val model = system.download { bytes, total -> _state.value = State.Downloading(bytes, total, Target.SYSTEM) }
@@ -260,13 +389,18 @@ class ModelStore(private val context: Context) {
     }
 
     /** Resumable download straight from Hugging Face (Apache 2.0, ungated). */
-    private suspend fun downloadBundled(variant: Variant, publish: (State) -> Unit): File = withContext(Dispatchers.IO) {
-        bundledFile(variant)?.let { return@withContext it }
-        val target = File(modelDir, variant.fileName)
-        val partial = File(modelDir, "${variant.fileName}.part")
+    private suspend fun downloadBundled(variant: Variant, publish: (State) -> Unit): File {
+        bundledFile(variant)?.let { return it }
+        return downloadFile(variant.url, variant.fileName, variant.sha256, publish)
+    }
+
+    /** Resumable, checksummed download of [url] into the models folder as [fileName]. */
+    private suspend fun downloadFile(url: String, fileName: String, sha256: String, publish: (State) -> Unit): File = withContext(Dispatchers.IO) {
+        val target = File(modelDir, fileName)
+        val partial = File(modelDir, "$fileName.part")
         try {
             var resumeFrom = partial.takeIf { it.exists() }?.length() ?: 0L
-            val conn = (URL(variant.url).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
                 connectTimeout = 20_000
                 readTimeout = 30_000
@@ -299,7 +433,7 @@ class ModelStore(private val context: Context) {
 
             publish(State.Verifying)
             val digest = partial.sha256()
-            if (digest != variant.sha256) {
+            if (digest != sha256) {
                 partial.delete()
                 throw IOException("Checksum mismatch, the download was corrupted")
             }
@@ -327,5 +461,7 @@ class ModelStore(private val context: Context) {
     companion object {
         private const val KEY_CHOICE = "choice"
         private const val KEY_SOUNDS = "sounds"
+        private const val KEY_SPEECH = "speech_choice"
+        private const val SPEECH_READY = ".ready"
     }
 }

@@ -1,5 +1,7 @@
 package com.lucrativeworm.aigallery.ml
 
+import com.lucrativeworm.aigallery.data.AudioText
+import com.lucrativeworm.aigallery.data.AudioText_
 import com.lucrativeworm.aigallery.data.Db
 import com.lucrativeworm.aigallery.data.MomentKind
 import com.lucrativeworm.aigallery.data.Photo
@@ -8,6 +10,7 @@ import com.lucrativeworm.aigallery.data.PhotoVector_
 import com.lucrativeworm.aigallery.data.VideoMoment
 import com.lucrativeworm.aigallery.data.VideoMoment_
 import io.objectbox.kotlin.boxFor
+import io.objectbox.query.QueryBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -33,10 +36,11 @@ class SearchEngine(private val embedder: Embedder) {
     private val photos = Db.store.boxFor<Photo>()
     private val vectors = Db.store.boxFor<PhotoVector>()
     private val moments = Db.store.boxFor<VideoMoment>()
+    private val audioTexts = Db.store.boxFor<AudioText>()
 
     suspend fun search(query: String): List<Hit> {
         val vector = embedder.embedText(query.trim())
-        return nearest(vector, exclude = emptySet(), band = TEXT_BAND, sounds = true)
+        return nearest(vector, exclude = emptySet(), band = TEXT_BAND, sounds = true, said = spokenMatches(query, emptySet()))
     }
 
     suspend fun similarTo(photoId: Long): List<Hit> {
@@ -59,8 +63,8 @@ class SearchEngine(private val embedder: Embedder) {
         val textVector = if (words.isNotEmpty()) embedder.embedText(words) else null
         return when {
             image == null && textVector == null -> emptyList()
-            image == null -> nearest(textVector!!, exclude, TEXT_BAND, sounds = true)
-            textVector == null -> nearest(image, exclude, IMAGE_BAND).take(36)
+            image == null -> nearest(textVector!!, exclude, TEXT_BAND, sounds = true, said = spokenMatches(words, exclude))
+            textVector == null -> nearest(image, exclude, IMAGE_BAND)
             else -> fused(image, textVector, exclude)
         }
     }
@@ -88,7 +92,6 @@ class SearchEngine(private val embedder: Embedder) {
                 .map { (id, si, st) -> Triple(id, 0.5f * ((si - bestImage) / IMAGE_BAND + (st - bestText) / TEXT_BAND), (si + st) / 2f) }
                 .filter { it.second >= -1f }
                 .sortedByDescending { it.second }
-                .take(60)
             val byId = photos.get(ranked.map { it.first }).filterNotNull().associateBy { it.id }
             ranked.mapNotNull { (id, _, sim) -> byId[id]?.let { Hit(it, sim) } }
         }
@@ -116,7 +119,7 @@ class SearchEngine(private val embedder: Embedder) {
     /** Photos that look like [image]: a lifted object, a snapped photo, anything. */
     suspend fun searchByImage(image: android.graphics.Bitmap): List<Hit> {
         val vector = embedder.embedImage(image)
-        return nearest(vector, exclude = emptySet(), band = IMAGE_BAND).take(36)
+        return nearest(vector, exclude = emptySet(), band = IMAGE_BAND)
     }
 
     /** A scored candidate: a photo/video's own vector ([atMs] null) or one moment inside a video. */
@@ -128,7 +131,13 @@ class SearchEngine(private val embedder: Embedder) {
      * queries), soundtrack moments join too: text-to-audio scores sit on their own scale, so they
      * get their own floor and band, and are merged by how close each is to the best of its kind.
      */
-    private suspend fun nearest(vector: FloatArray, exclude: Set<Long>, band: Float, sounds: Boolean = false): List<Hit> =
+    private suspend fun nearest(
+        vector: FloatArray,
+        exclude: Set<Long>,
+        band: Float,
+        sounds: Boolean = false,
+        said: List<Pair<Match, Float>> = emptyList(),
+    ): List<Hit> =
         withContext(Dispatchers.IO) {
             val pictures = ArrayList<Match>()
             vectors.query(PhotoVector_.vector.nearestNeighbors(vector, CANDIDATES)).build()
@@ -148,6 +157,9 @@ class SearchEngine(private val embedder: Embedder) {
                     if (m.sim >= SOUND_FLOOR && m.sim >= best - SOUND_BAND) scored += m to (m.sim - best) / SOUND_BAND
                 }
             }
+            // Words someone actually said are an exact match: they rank above anything that's only
+            // similar in meaning.
+            scored += said
             if (scored.isEmpty()) return@withContext emptyList()
 
             // One hit per photo/video, at its best match, carrying every matching moment.
@@ -182,6 +194,32 @@ class SearchEngine(private val embedder: Embedder) {
             .filter { it.get().photoId !in exclude }
             .map { Match(it.get().photoId, 1f - it.score.toFloat(), it.get().startMs, kind == MomentKind.SOUND) }
 
+    /**
+     * Videos where the words of [query] were said, from their [AudioText]. Every word must be in
+     * one utterance; saying them in that order ranks higher than having them scattered through it.
+     * Scores sit above the 0..-1 scale [nearest] gives similar-meaning matches, so these lead.
+     */
+    private fun spokenMatches(query: String, exclude: Set<Long>): List<Pair<Match, Float>> {
+        val words = Speech.words(query)
+        if (words.isEmpty()) return emptyList()
+        val phrase = words.joinToString(" ")
+        val first: io.objectbox.query.QueryCondition<AudioText> = AudioText_.text.contains(words.first(), QueryBuilder.StringOrder.CASE_INSENSITIVE)
+        val condition = words.drop(1).fold(first) { c, w ->
+            c.and(AudioText_.text.contains(w, QueryBuilder.StringOrder.CASE_INSENSITIVE))
+        }
+        return audioTexts.query(condition).build().use { it.find(0, SPOKEN_LIMIT) }
+            .filter { it.photoId !in exclude }
+            .mapNotNull { t ->
+                // `contains` also matches inside longer words ("cat" in "catch"); check whole words.
+                val said = " ${Speech.words(t.text).joinToString(" ")} "
+                when {
+                    " $phrase " in said -> Match(t.photoId, 1f, t.startMs, heard = true) to SAID_PHRASE
+                    words.all { " $it " in said } -> Match(t.photoId, 1f, t.startMs, heard = true) to SAID_WORDS
+                    else -> null
+                }
+            }
+    }
+
     private companion object {
         // Upper bound only: the similarity band decides how many actually show.
         const val CANDIDATES = 1000
@@ -192,5 +230,9 @@ class SearchEngine(private val embedder: Embedder) {
         // real libraries.
         const val SOUND_FLOOR = 0.22f
         const val SOUND_BAND = 0.08f
+        // Exact spoken-word matches rank above every similarity-based one (those score <= 0).
+        const val SAID_PHRASE = 2f
+        const val SAID_WORDS = 1f
+        const val SPOKEN_LIMIT = 500L
     }
 }

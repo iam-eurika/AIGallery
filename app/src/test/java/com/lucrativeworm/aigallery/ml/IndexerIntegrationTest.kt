@@ -175,4 +175,32 @@ class IndexerIntegrationTest {
             assertEquals(3, indexed)
         }
     }
+
+    @Test
+    fun `unticked kinds wait, and the choice survives a restart`() {
+        photos.put(
+            listOf(
+                Photo(uri = "p1"),
+                Photo(uri = "p2", indexState = IndexState.DONE),
+                Photo(uri = "v1", isVideo = true),
+                Photo(uri = "v2", isVideo = true, indexState = IndexState.DONE, soundState = IndexState.PENDING),
+            )
+        )
+        soundsWanted = true
+        every { embedder.supportsAudio } returns true
+        val idx = indexer()
+        assertEquals("p1, v1, and both soundtracks", 4, idx.pendingCount())
+
+        idx.setKinds(IndexKinds(photos = true, videos = false))
+        assertEquals("only p1", 1, idx.pendingCount())
+        idx.refreshCounts()
+        assertEquals("only photos count towards progress", 2, idx.progress.value.total)
+
+        idx.setKinds(IndexKinds(photos = false, videos = true))
+        assertEquals("v1 and both soundtracks", 3, idx.pendingCount())
+
+        idx.setKinds(IndexKinds(photos = false, videos = false))
+        assertEquals(0, idx.pendingCount())
+        assertEquals(IndexKinds(photos = false, videos = false), indexer().kinds.value)
+    }
 }

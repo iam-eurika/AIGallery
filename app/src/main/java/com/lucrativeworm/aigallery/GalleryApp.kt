@@ -41,7 +41,8 @@ class GalleryApp : Application() {
         val folders = FolderLibrary(app)
         val models = ModelStore(app)
         val embedder = Embedder(app)
-        val indexer = Indexer(app, embedder, scope, soundsWanted = { models.sounds.value == true })
+        val speech = com.lucrativeworm.aigallery.ml.Speech(models)
+        val indexer = Indexer(app, embedder, scope, soundsWanted = { models.sounds.value == true }, speech = speech)
         val search = SearchEngine(embedder)
         val segmenter = Segmenter(app)
         val backups = IndexBackups(
@@ -53,6 +54,11 @@ class GalleryApp : Application() {
         )
 
         init {
+            // Whether Android offers its speech model decides the default speech engine.
+            scope.launch {
+                runCatching { models.checkAndroidSpeech() }
+                    .onFailure { if (it is CancellationException) throw it; Log.w("GalleryApp", "Speech check failed", it) }
+            }
             // Whenever an indexing pass stops (done, paused, or stopped by the system), save the
             // index if auto backup is on and there is something new.
             scope.launch {
