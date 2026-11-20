@@ -57,6 +57,7 @@ import com.lucrativeworm.aigallery.ui.components.LocalNavScope
 import com.lucrativeworm.aigallery.ui.components.LocalSharedScope
 import com.lucrativeworm.aigallery.ui.screens.GalleryScreen
 import com.lucrativeworm.aigallery.ui.screens.GalleryUiState
+import com.lucrativeworm.aigallery.ui.screens.BackupActions
 import com.lucrativeworm.aigallery.ui.screens.SettingsScreen
 import com.lucrativeworm.aigallery.ui.screens.SettingsUiState
 import com.lucrativeworm.aigallery.ui.screens.SourceActions
@@ -125,6 +126,9 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
     var askForFolder by rememberSaveable { mutableStateOf(false) }
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.addFolder(uri)
+    }
+    val pickBackupFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) vm.setBackupFolder(uri)
     }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         granted = result.values.any { it }
@@ -404,6 +408,7 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
                     val active by vm.embedderBackend.collectAsStateWithLifecycle()
                     val soundMissing by vm.soundModelMissing.collectAsStateWithLifecycle()
                     val soundDownload by vm.soundDownload.collectAsStateWithLifecycle()
+                    val backups by vm.backups.collectAsStateWithLifecycle()
                     SettingsScreen(
                         state = SettingsUiState(
                             choice, model, system, active, remember(model, soundDownload) { vm.bundledDownloaded() },
@@ -419,6 +424,17 @@ private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel =
                         onIndexSchedule = vm::setIndexSchedule,
                         onSounds = { on -> if (on != sounds) vm.setSounds(on) },
                         onDownloadSoundModel = vm::downloadSoundModel,
+                        backups = backups,
+                        backupActions = remember {
+                            BackupActions(
+                                onPickFolder = { pickBackupFolder.launch(null) },
+                                onRefresh = vm::refreshBackups,
+                                onBackupNow = vm::backupNow,
+                                onRestore = vm::restoreBackup,
+                                onAuto = vm::setAutoBackup,
+                                onDismissMessage = vm::clearBackupMessage,
+                            )
+                        },
                     )
                 } else if (target is Viewing) {
                     val photos = remember(target, deletedIds) { target.photos.filterNot { it.id in deletedIds } }

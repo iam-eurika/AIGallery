@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.lucrativeworm.aigallery.data.IndexBackups
 import com.lucrativeworm.aigallery.ml.IndexSchedule
 import com.lucrativeworm.aigallery.ml.ModelChoice
 import com.lucrativeworm.aigallery.ml.ModelStore
@@ -78,6 +80,8 @@ fun SettingsScreen(
     onIndexSchedule: (IndexSchedule) -> Unit = {},
     onSounds: (Boolean) -> Unit = {},
     onDownloadSoundModel: () -> Unit = {},
+    backups: IndexBackups.State? = null,
+    backupActions: BackupActions = BackupActions(),
 ) {
     val c = Theme.colors
     val t = Theme.type
@@ -204,6 +208,10 @@ fun SettingsScreen(
                 selected = indexSchedule == IndexSchedule.ANYTIME,
                 onClick = { onIndexSchedule(IndexSchedule.ANYTIME) },
             )
+            if (backups != null) {
+                Spacer(Modifier.height(32.dp))
+                BackupSection(backups, state.activeModel, backupActions)
+            }
             Spacer(Modifier.height(32.dp))
         }
     }
@@ -245,6 +253,7 @@ private fun Option(
     status: String,
     selected: Boolean,
     enabled: Boolean = true,
+    role: Role = Role.RadioButton,
     onClick: () -> Unit,
 ) {
     val c = Theme.colors
@@ -256,7 +265,7 @@ private fun Option(
             .fillMaxWidth()
             .alpha(if (enabled) 1f else 0.45f)
             .then(if (enabled) Modifier.squish(pressedScale = 0.97f, onClick = onClick) else Modifier)
-            .semantics { role = Role.RadioButton; this.selected = selected }
+            .semantics { this.role = role; this.selected = selected }
             .clip(RoundedCornerShape(18.dp))
             .background(if (selected) c.safelightSoft else c.raised)
             .border(1.dp, border, RoundedCornerShape(18.dp))
@@ -340,3 +349,147 @@ private fun Pill(text: String, onClick: () -> Unit) {
             .padding(horizontal = 18.dp, vertical = 10.dp),
     ) { Txt(text, Theme.type.label, c.onSafelight) }
 }
+
+class BackupActions(
+    val onPickFolder: () -> Unit = {},
+    val onRefresh: () -> Unit = {},
+    val onBackupNow: () -> Unit = {},
+    val onRestore: (IndexBackups.BackupFile) -> Unit = {},
+    val onAuto: (Boolean) -> Unit = {},
+    val onDismissMessage: () -> Unit = {},
+)
+
+/** Pick a folder once; back up there by hand or automatically; restore by tapping a backup. */
+@Composable
+private fun BackupSection(state: IndexBackups.State, activeModel: String?, actions: BackupActions) {
+    val c = Theme.colors
+    val t = Theme.type
+    LaunchedEffect(Unit) { actions.onRefresh() }
+    Txt("Backup", t.title)
+    Spacer(Modifier.height(6.dp))
+    Txt(
+        "Save what search knows about your photos to a folder, so after a reinstall or on a new phone you restore it instead of preparing everything again.",
+        t.caption, c.inkSoft,
+    )
+    Spacer(Modifier.height(18.dp))
+
+    val busy = state.work != null
+    if (state.folderName == null || state.lostAccess) {
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.raised).padding(16.dp)) {
+            Txt(
+                if (state.lostAccess) "The app can no longer reach \"${state.folderName}\". Choose it again to see your backups."
+                else "Choose a folder, such as Documents/AI Gallery. After a reinstall, choose the same folder and your backups appear here.",
+                t.caption, c.inkSoft,
+            )
+            Spacer(Modifier.height(12.dp))
+            Pill("Choose folder", actions.onPickFolder)
+        }
+        Message(state, actions)
+        return
+    }
+
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.raised).padding(16.dp)) {
+        Txt(state.folderName, t.label)
+        Spacer(Modifier.height(4.dp))
+        Txt(
+            if (state.lastBackupAt > 0) "Last backup ${formatDate(state.lastBackupAt)}" else "No backup from this phone yet",
+            t.caption, c.inkFaint,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.alpha(if (busy) 0.45f else 1f)) { Pill("Back up now") { if (!busy) actions.onBackupNow() } }
+            Spacer(Modifier.width(16.dp))
+            Box(Modifier.squish(onClick = actions.onPickFolder).padding(vertical = 10.dp)) {
+                Txt("Change folder", t.label, c.safelight)
+            }
+        }
+        if (busy) {
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).lightLeak(c.sunken, c.safelight.copy(alpha = 0.6f)))
+            Spacer(Modifier.height(8.dp))
+            Txt(
+                when (state.work) {
+                    IndexBackups.Work.BACKING_UP -> "Backing up…"
+                    IndexBackups.Work.RESTORING -> "Restoring… indexing is paused until this finishes"
+                    else -> "Looking for backups…"
+                },
+                t.caption, c.inkSoft,
+            )
+        }
+    }
+    Message(state, actions)
+    Spacer(Modifier.height(10.dp))
+    Option(
+        title = "Back up automatically",
+        body = "After photos are prepared, a fresh backup is saved here. The newest 5 are kept.",
+        status = if (state.auto) "On" else "Off",
+        selected = state.auto,
+        role = Role.Switch,
+        onClick = { actions.onAuto(!state.auto) },
+    )
+
+    if (state.files.isNotEmpty()) {
+        Spacer(Modifier.height(22.dp))
+        Txt("Restore", t.label)
+        Spacer(Modifier.height(4.dp))
+        Txt(
+            "Gives photos on this phone their search data back. Anything a backup doesn't cover is prepared as usual.",
+            t.caption, c.inkSoft,
+        )
+        Spacer(Modifier.height(12.dp))
+        state.files.forEach { file ->
+            BackupRow(file, activeModel, enabled = !busy, onRestore = { actions.onRestore(file) })
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun Message(state: IndexBackups.State, actions: BackupActions) {
+    val message = state.message ?: return
+    Spacer(Modifier.height(10.dp))
+    Box(Modifier.fillMaxWidth().squish(pressedScale = 0.98f, onClick = actions.onDismissMessage)) {
+        Txt(message, Theme.type.caption, Theme.colors.safelight)
+    }
+}
+
+@Composable
+private fun BackupRow(file: IndexBackups.BackupFile, activeModel: String?, enabled: Boolean, onRestore: () -> Unit) {
+    val c = Theme.colors
+    val t = Theme.type
+    val h = file.header
+    val otherModel = activeModel != null && h.models.isNotEmpty() && activeModel !in h.models
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.raised)
+            .border(1.dp, c.line, RoundedCornerShape(18.dp)).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Txt(formatDate(h.createdAt), t.label)
+            Spacer(Modifier.height(4.dp))
+            Txt("${IndexBackups.count(h)} · ${"%.1f".format(file.bytes / 1_000_000.0)} MB", t.caption, c.inkSoft)
+            Spacer(Modifier.height(4.dp))
+            Txt(
+                when {
+                    otherModel -> "Made with ${modelName(h.models)}, not the model search uses now"
+                    else -> "Made with ${modelName(h.models)}"
+                },
+                t.caption, if (otherModel) c.safelight else c.inkFaint,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.alpha(if (enabled && !otherModel) 1f else 0.45f)) {
+            Pill("Restore") { if (enabled && !otherModel) onRestore() }
+        }
+    }
+}
+
+private fun modelName(models: List<String>): String = when {
+    models.isEmpty() -> "no model"
+    models.size > 1 -> "more than one model"
+    models[0].startsWith("mlkit:") -> "Android's model"
+    else -> "the downloaded model"
+}
+
+private fun formatDate(ms: Long): String =
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(ms))

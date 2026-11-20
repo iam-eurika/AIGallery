@@ -412,6 +412,35 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         if (graph.indexer.pendingCount() > 0) IndexScheduler.runNow(getApplication())
     }
 
+    /** Backups of the search index, in a folder the user picks once. */
+    val backups: StateFlow<com.lucrativeworm.aigallery.data.IndexBackups.State> = graph.backups.state
+
+    fun setBackupFolder(treeUri: Uri) {
+        viewModelScope.launch { graph.backups.setFolder(treeUri) }
+    }
+
+    fun setAutoBackup(on: Boolean) = graph.backups.setAuto(on)
+
+    fun refreshBackups() {
+        viewModelScope.launch { graph.backups.refresh() }
+    }
+
+    fun backupNow() {
+        // App-scoped: leaving Settings mid-backup must not leave half a file behind.
+        graph.scope.launch { graph.backups.backupNow() }
+    }
+
+    fun restoreBackup(file: com.lucrativeworm.aigallery.data.IndexBackups.BackupFile) {
+        graph.scope.launch {
+            graph.backups.restore(file)
+            graph.indexer.refreshCounts()
+            // Whatever the backup didn't cover is indexed as usual.
+            kotlinx.coroutines.withContext(Dispatchers.Main) { startIndexing() }
+        }
+    }
+
+    fun clearBackupMessage() = graph.backups.clearMessage()
+
     fun type(text: String) {
         val photos = (input.value as? SearchInput.Query)?.photos.orEmpty()
         setQuery(SearchInput.Query(text, photos))

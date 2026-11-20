@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.lucrativeworm.aigallery.data.Db
 import com.lucrativeworm.aigallery.data.FolderLibrary
+import com.lucrativeworm.aigallery.data.IndexBackups
 import com.lucrativeworm.aigallery.data.MediaLibrary
 import com.lucrativeworm.aigallery.ml.Embedder
 import com.lucrativeworm.aigallery.ml.Indexer
@@ -14,6 +15,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -38,6 +44,24 @@ class GalleryApp : Application() {
         val indexer = Indexer(app, embedder, scope, soundsWanted = { models.sounds.value == true })
         val search = SearchEngine(embedder)
         val segmenter = Segmenter(app)
+        val backups = IndexBackups(
+            app,
+            activeModel = { embedder.modelId },
+            soundsOn = { models.sounds.value == true },
+            pauseIndexing = { indexer.stopAndJoin() },
+            syncSources = { syncSources() },
+        )
+
+        init {
+            // Whenever an indexing pass stops (done, paused, or stopped by the system), save the
+            // index if auto backup is on and there is something new.
+            scope.launch {
+                indexer.progress.map { it.running }.distinctUntilChanged().drop(1).filter { !it }.collect {
+                    runCatching { backups.autoBackupIfDue(indexer.pendingCount()) }
+                        .onFailure { if (it is CancellationException) throw it; Log.w("GalleryApp", "Auto backup failed", it) }
+                }
+            }
+        }
 
         /** Mirrors every source (media library + picked folders) into ObjectBox. */
         suspend fun syncSources() {
