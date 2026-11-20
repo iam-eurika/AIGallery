@@ -23,9 +23,17 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
 
-        // LiteRT-LM ships large native libs; phones are arm64 and emulators on Macs/PCs are arm64/x86_64.
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    // One APK per ABI plus a universal one. LiteRT-LM only ships arm64-v8a and x86_64 natives,
+    // so those are the only ABIs we can support (phones are arm64; emulators arm64/x86_64).
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = true
+        }
     }
 
     buildTypes {
