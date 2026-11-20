@@ -179,6 +179,9 @@ class ModelStore(private val context: Context) {
         if (_state.value is State.Downloading || _state.value == State.Verifying) return null.also { _checked.value = true }
         // The downloaded model doesn't need AICore: don't hold up search waiting for it to answer.
         val status = if (_choice.value == ModelChoice.BUNDLED) system.status.value else system.check()
+        // Android-only was picked, but this phone has no AICore: there's no such choice here (Settings
+        // hides it), so fall back to Automatic instead of leaving search off.
+        if (status == SystemModelStatus.UNSUPPORTED && _choice.value == ModelChoice.SYSTEM) setChoice(ModelChoice.AUTO)
         val full = bundledFile(Variant.FULL)?.let { State.Ready(Source.Bundled(it, Variant.FULL)) }
         // Until the sound model arrives, search keeps running on whatever model is already here.
         val fallback = bundledFile(Variant.VISION)?.let { State.Ready(Source.Bundled(it, Variant.VISION)) }

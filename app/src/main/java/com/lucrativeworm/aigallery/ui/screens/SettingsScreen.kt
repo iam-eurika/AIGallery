@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,11 +49,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.lucrativeworm.aigallery.data.IndexBackups
 import com.lucrativeworm.aigallery.ml.IndexKinds
 import com.lucrativeworm.aigallery.ml.IndexSchedule
@@ -111,167 +121,208 @@ fun SettingsScreen(
     val close = { open = null }
     val systemOk = state.system != SystemModelStatus.UNSUPPORTED
     val downloadMb = if (state.sounds == true) Variant.FULL.approxMb else Variant.VISION.approxMb
+
+    // Where each section starts in the scrolled content, so the jump bar can scroll to it and
+    // light up the one you're reading.
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val sections = remember(backups != null) { Section.entries.filter { it != Section.BACKUP || backups != null } }
+    val tops = remember { mutableStateMapOf<Section, Int>() }
+    val nudge = with(density) { 12.dp.roundToPx() }
+    val current by remember(sections) {
+        derivedStateOf {
+            if (scroll.maxValue > 0 && scroll.value >= scroll.maxValue - nudge) sections.last()
+            else sections.lastOrNull { (tops[it] ?: Int.MAX_VALUE) <= scroll.value + nudge * 4 } ?: sections.first()
+        }
+    }
+    val jump: (Section) -> Unit = { s -> tops[s]?.let { y -> scope.launch { scroll.animateScrollTo(y - nudge) } } }
+    val track: (Section) -> Modifier = { s -> Modifier.onGloballyPositioned { tops[s] = it.positionInParent().y.toInt() } }
+
     Box(Modifier.fillMaxSize().background(c.canvas)) {
-        Column(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
-                .verticalScroll(rememberScrollState()),
-        ) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            // Back, then one chip per section. Fixed, so every section is one tap away from anywhere.
             Row(Modifier.padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(Glyph.Back, "Back", onClick = onBack)
+                Row(
+                    Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(end = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    sections.forEach { s -> JumpChip(s, selected = s == current) { jump(s) } }
+                }
             }
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                Txt("Settings", t.display)
-                Spacer(Modifier.height(28.dp))
-                Txt("Search model", t.title)
-                Spacer(Modifier.height(6.dp))
-                Txt(
-                    "Search, \"More like this\" and Circle all run on EmbeddingGemma 2, on this phone. Choose where it comes from.",
-                    t.caption, c.inkSoft,
-                )
-                Spacer(Modifier.height(18.dp))
-                SettingTile(
-                    value = when (state.choice) {
-                        ModelChoice.AUTO -> "Automatic"
-                        ModelChoice.SYSTEM -> "Android system model"
-                        ModelChoice.BUNDLED -> "Downloaded model"
-                    },
-                    status = when (state.choice) {
-                        ModelChoice.AUTO -> autoStatus(state)
-                        ModelChoice.SYSTEM -> systemStatus(state.system)
-                        ModelChoice.BUNDLED -> if (state.bundledDownloaded) "Downloaded" else "Not downloaded"
-                    },
-                    onClick = { open = Picker.MODEL },
-                )
+            Column(Modifier.weight(1f).verticalScroll(scroll)) {
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    Txt("Settings", t.display)
+                    Spacer(Modifier.height(24.dp))
 
-                AnimatedVisibility(
-                    visible = state.model !is ModelStore.State.Ready,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
-                ) {
-                    NeedsAction(state.model, onDownload, Modifier.padding(top = 16.dp))
-                }
-
-                Spacer(Modifier.height(18.dp))
-                Txt(
-                    "The two models make different kinds of fingerprints for your photos. After a switch, the library is re-indexed with the new one, so search fills back in over a few minutes.",
-                    t.caption, c.inkFaint,
-                )
-
-                Spacer(Modifier.height(32.dp))
-                Txt("Sounds in videos", t.title)
-                Spacer(Modifier.height(6.dp))
-                Txt(
-                    "Videos are always searchable by what they show. Sounds add what you hear, like a dog barking or the birthday song, and jump to that moment.",
-                    t.caption, c.inkSoft,
-                )
-                Spacer(Modifier.height(18.dp))
-                SettingTile(
-                    value = when (state.sounds) {
-                        true -> "Include sounds"
-                        false -> "Pictures only"
-                        null -> "Not chosen yet"
-                    },
-                    status = if (state.sounds == false) "Sounds aren't indexed" else soundStatus(state),
-                    onClick = { open = Picker.SOUNDS },
-                )
-                val sound = state.soundDownload
-                AnimatedVisibility(
-                    visible = state.sounds == true && (state.soundModelMissing || sound != null),
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
-                ) {
-                    NeedsAction(
-                        sound ?: ModelStore.State.Missing(ModelStore.Target.BUNDLED),
-                        onDownloadSoundModel,
-                        Modifier.padding(top = 16.dp),
-                        missingText = "Search keeps working with the current model while the one that can hear downloads (about ${Variant.FULL.approxMb} MB). Then your library is prepared again with it.",
-                    )
-                }
-                AnimatedVisibility(
-                    visible = state.sounds == true,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
-                ) {
-                    Column(Modifier.padding(top = 24.dp)) {
-                        Txt("Spoken words", t.label)
-                        Spacer(Modifier.height(4.dp))
-                        Txt("Write down what people say in videos, so you can search for the exact words.", t.caption, c.inkSoft)
-                        Spacer(Modifier.height(12.dp))
-                        SettingTile(
-                            value = speechChoiceName(state.speech.choice),
-                            status = speechStatus(state.speech),
-                            onClick = { open = Picker.SPEECH },
+                    // ── Search ──
+                    Column(track(Section.SEARCH)) {
+                        SectionHeader(
+                            Section.SEARCH,
+                            if (systemOk) "Search, \"More like this\" and Circle all run on EmbeddingGemma 2, on this phone. Choose where it comes from."
+                            else "Search, \"More like this\" and Circle all run on EmbeddingGemma 2, downloaded to this phone.",
                         )
-                        val sp = state.speech
+                        // Without AICore there is only the downloaded model, so there's nothing to choose.
+                        if (systemOk) {
+                            Spacer(Modifier.height(16.dp))
+                            SettingTile(
+                                glyph = Glyph.Sparkle,
+                                label = "Model",
+                                value = when (state.choice) {
+                                    ModelChoice.AUTO -> "Automatic"
+                                    ModelChoice.SYSTEM -> "Android system model"
+                                    ModelChoice.BUNDLED -> "Downloaded model"
+                                },
+                                status = when (state.choice) {
+                                    ModelChoice.AUTO -> autoStatus(state)
+                                    ModelChoice.SYSTEM -> systemStatus(state.system)
+                                    ModelChoice.BUNDLED -> if (state.bundledDownloaded) "Downloaded" else "Not downloaded"
+                                },
+                                onClick = { open = Picker.MODEL },
+                            )
+                        }
                         AnimatedVisibility(
-                            visible = sp.toFetch != null || sp.download != null,
+                            visible = state.model !is ModelStore.State.Ready,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                        ) {
+                            NeedsAction(state.model, onDownload, Modifier.padding(top = 12.dp))
+                        }
+                        if (systemOk) {
+                            Spacer(Modifier.height(14.dp))
+                            Txt(
+                                "The two models make different kinds of fingerprints for your photos. After a switch, the library is re-indexed with the new one, so search fills back in over a few minutes.",
+                                t.caption, c.inkFaint,
+                            )
+                        }
+                    }
+
+                    SectionBreak()
+
+                    // ── Videos ──
+                    Column(track(Section.VIDEOS)) {
+                        SectionHeader(
+                            Section.VIDEOS,
+                            "Videos are always searchable by what they show. Sounds add what you hear, like a dog barking or the birthday song, and jump to that moment.",
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        SettingTile(
+                            glyph = Glyph.Wave,
+                            label = "Sounds",
+                            value = when (state.sounds) {
+                                true -> "Include sounds"
+                                false -> "Pictures only"
+                                null -> "Not chosen yet"
+                            },
+                            status = if (state.sounds == false) "Sounds aren't indexed" else soundStatus(state),
+                            onClick = { open = Picker.SOUNDS },
+                        )
+                        val sound = state.soundDownload
+                        AnimatedVisibility(
+                            visible = state.sounds == true && (state.soundModelMissing || sound != null),
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
                         ) {
                             NeedsAction(
-                                sp.download ?: ModelStore.State.Missing(
-                                    if (sp.toFetch == SpeechEngine.ANDROID) ModelStore.Target.SYSTEM else ModelStore.Target.BUNDLED
-                                ),
-                                onDownloadSpeech,
-                                Modifier.padding(top = 16.dp),
-                                missingText = if (sp.toFetch == SpeechEngine.ANDROID) "Android will download its speech model for this phone. Nothing is fetched until you tap Download."
-                                else "The app's speech model is a one-time download of about ${SpeechModel.APPROX_MB} MB (English). Nothing is fetched until you tap Download.",
+                                sound ?: ModelStore.State.Missing(ModelStore.Target.BUNDLED),
+                                onDownloadSoundModel,
+                                Modifier.padding(top = 12.dp),
+                                missingText = "Search keeps working with the current model while the one that can hear downloads (about ${Variant.FULL.approxMb} MB). Then your library is prepared again with it.",
                             )
                         }
+                        AnimatedVisibility(
+                            visible = state.sounds == true,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                        ) {
+                            Column(Modifier.padding(top = 10.dp)) {
+                                SettingTile(
+                                    glyph = Glyph.Speech,
+                                    label = "Spoken words",
+                                    value = speechChoiceName(state.speech.choice),
+                                    status = speechStatus(state.speech),
+                                    onClick = { open = Picker.SPEECH },
+                                )
+                                val sp = state.speech
+                                AnimatedVisibility(
+                                    visible = sp.toFetch != null || sp.download != null,
+                                    enter = fadeIn() + expandVertically(),
+                                    exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                                ) {
+                                    NeedsAction(
+                                        sp.download ?: ModelStore.State.Missing(
+                                            if (sp.toFetch == SpeechEngine.ANDROID) ModelStore.Target.SYSTEM else ModelStore.Target.BUNDLED
+                                        ),
+                                        onDownloadSpeech,
+                                        Modifier.padding(top = 12.dp),
+                                        missingText = if (sp.toFetch == SpeechEngine.ANDROID) "Android will download its speech model for this phone. Nothing is fetched until you tap Download."
+                                        else "The app's speech model is a one-time download of about ${SpeechModel.APPROX_MB} MB (English). Nothing is fetched until you tap Download.",
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Txt(
+                            "Spoken words writes down what people say, so you can search for the exact words. Switching any of these changes which model your library is prepared with, so search fills back in over a while.",
+                            t.caption, c.inkFaint,
+                        )
                     }
-                }
-                Spacer(Modifier.height(18.dp))
-                Txt(
-                    "Switching between these changes which model your library is prepared with, so search fills back in over a while.",
-                    t.caption, c.inkFaint,
-                )
 
-                Spacer(Modifier.height(32.dp))
-                Txt("When to prepare photos", t.title)
-                Spacer(Modifier.height(6.dp))
-                Txt(
-                    "Making photos searchable runs on this phone and keeps it busy for a while.",
-                    t.caption, c.inkSoft,
-                )
-                Spacer(Modifier.height(18.dp))
-                SettingTile(
-                    value = when (indexSchedule) {
-                        IndexSchedule.WHEN_IDLE -> "While I'm asleep"
-                        IndexSchedule.ANYTIME -> "Anytime"
-                        null -> "Not chosen yet"
-                    },
-                    status = when (indexSchedule) {
-                        IndexSchedule.WHEN_IDLE -> "New photos become searchable by morning"
-                        IndexSchedule.ANYTIME -> "Search fills in sooner"
-                        null -> "Nothing is prepared until you choose"
-                    },
-                    onClick = { open = Picker.SCHEDULE },
-                )
-                Spacer(Modifier.height(12.dp))
-                SettingTile(
-                    value = when {
-                        indexKinds.photos && indexKinds.videos -> "Photos and videos"
-                        indexKinds.photos -> "Photos only"
-                        indexKinds.videos -> "Videos only"
-                        else -> "Nothing for now"
-                    },
-                    status = when {
-                        indexKinds.photos && indexKinds.videos -> "Everything is prepared"
-                        indexKinds.photos -> "Videos wait until you tick them"
-                        indexKinds.videos -> "Photos wait until you tick them"
-                        else -> "Preparing is on hold"
-                    },
-                    onClick = { open = Picker.KINDS },
-                )
-                if (backups != null) {
+                    SectionBreak()
+
+                    // ── Preparing ──
+                    Column(track(Section.PREPARING)) {
+                        SectionHeader(Section.PREPARING, "Making photos searchable runs on this phone and keeps it busy for a while.")
+                        Spacer(Modifier.height(16.dp))
+                        SettingTile(
+                            glyph = Glyph.Moon,
+                            label = "When",
+                            value = when (indexSchedule) {
+                                IndexSchedule.WHEN_IDLE -> "While I'm asleep"
+                                IndexSchedule.ANYTIME -> "Anytime"
+                                null -> "Not chosen yet"
+                            },
+                            status = when (indexSchedule) {
+                                IndexSchedule.WHEN_IDLE -> "New photos become searchable by morning"
+                                IndexSchedule.ANYTIME -> "Search fills in sooner"
+                                null -> "Nothing is prepared until you choose"
+                            },
+                            onClick = { open = Picker.SCHEDULE },
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        SettingTile(
+                            glyph = Glyph.Photo,
+                            label = "What",
+                            value = when {
+                                indexKinds.photos && indexKinds.videos -> "Photos and videos"
+                                indexKinds.photos -> "Photos only"
+                                indexKinds.videos -> "Videos only"
+                                else -> "Nothing for now"
+                            },
+                            status = when {
+                                indexKinds.photos && indexKinds.videos -> "Everything is prepared"
+                                indexKinds.photos -> "Videos wait until you tick them"
+                                indexKinds.videos -> "Photos wait until you tick them"
+                                else -> "Preparing is on hold"
+                            },
+                            onClick = { open = Picker.KINDS },
+                        )
+                    }
+
+                    // ── Backup ──
+                    if (backups != null) {
+                        SectionBreak()
+                        Column(track(Section.BACKUP)) {
+                            BackupSection(backups, state.activeModel, backupActions)
+                        }
+                    }
                     Spacer(Modifier.height(32.dp))
-                    BackupSection(backups, state.activeModel, backupActions)
                 }
-                Spacer(Modifier.height(32.dp))
             }
         }
 
-        OptionSheet(open == Picker.MODEL, "Search model", onDismiss = close) {
+        OptionSheet(open == Picker.MODEL && systemOk, "Search model", Glyph.Sparkle, onDismiss = close) {
             Option(
                 title = "Automatic",
                 body = "Android's built-in model when this phone has it, otherwise the downloaded one.",
@@ -298,7 +349,7 @@ fun SettingsScreen(
             )
         }
 
-        OptionSheet(open == Picker.SOUNDS, "Sounds in videos", onDismiss = close) {
+        OptionSheet(open == Picker.SOUNDS, "Sounds in videos", Glyph.Wave, onDismiss = close) {
             Option(
                 title = "Include sounds",
                 body = "Uses the larger downloaded model (about ${Variant.FULL.approxMb} MB), since Android's built-in one can't hear. Videos take longer to prepare.",
@@ -316,7 +367,7 @@ fun SettingsScreen(
             )
         }
 
-        OptionSheet(open == Picker.SPEECH, "Spoken words", onDismiss = close) {
+        OptionSheet(open == Picker.SPEECH, "Spoken words", Glyph.Speech, onDismiss = close) {
             val sp = state.speech
             Option(
                 title = "Automatic",
@@ -353,7 +404,7 @@ fun SettingsScreen(
         }
 
         // Checkboxes: the sheet stays open while the user ticks, and closes on Done or a tap outside.
-        OptionSheet(open == Picker.KINDS, "What to prepare", onDismiss = close) {
+        OptionSheet(open == Picker.KINDS, "What to prepare", Glyph.Photo, onDismiss = close) {
             Txt(
                 "Choose what gets made searchable. Unticking something keeps what's already done; it just waits until you tick it again.",
                 t.caption, c.inkSoft,
@@ -380,7 +431,7 @@ fun SettingsScreen(
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { Pill("Done", close) }
         }
 
-        OptionSheet(open == Picker.SCHEDULE, "When to prepare photos", onDismiss = close) {
+        OptionSheet(open == Picker.SCHEDULE, "When to prepare photos", Glyph.Moon, onDismiss = close) {
             Option(
                 title = "While I'm asleep",
                 body = "Only when the phone is charging and not in use, like overnight. Nothing slows down during the day.",
@@ -428,9 +479,67 @@ private fun androidSpeechStatus(s: SystemModelStatus): String = when (s) {
     else -> "Not available on this phone"
 }
 
+/** The page's sections, in order. Each has one icon, used on its jump chip, header and nowhere else. */
+private enum class Section(val title: String, val glyph: Glyph) {
+    SEARCH("Search", Glyph.Search),
+    VIDEOS("Videos", Glyph.Play),
+    PREPARING("Preparing", Glyph.Clock),
+    BACKUP("Backup", Glyph.Folder),
+}
+
+/** A glyph on a soft rounded square, so icons read as markers rather than buttons. */
+@Composable
+private fun IconBadge(glyph: Glyph, tint: Color, fill: Color, size: Dp = 36.dp) {
+    Box(
+        Modifier.size(size).clip(RoundedCornerShape(size * 0.33f)).background(fill),
+        contentAlignment = Alignment.Center,
+    ) { GlyphIcon(glyph, tint, size = size * 0.55f) }
+}
+
+@Composable
+private fun SectionHeader(section: Section, blurb: String) {
+    val c = Theme.colors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconBadge(section.glyph, c.safelight, c.safelightSoft)
+        Spacer(Modifier.width(12.dp))
+        Txt(section.title, Theme.type.title)
+    }
+    Spacer(Modifier.height(10.dp))
+    Txt(blurb, Theme.type.caption, c.inkSoft)
+}
+
+/** A hairline with room around it, so sections read as separate blocks. */
+@Composable
+private fun SectionBreak() {
+    Spacer(Modifier.height(28.dp))
+    Box(Modifier.fillMaxWidth().height(1.dp).background(Theme.colors.line))
+    Spacer(Modifier.height(28.dp))
+}
+
+/** Top-bar shortcut to a section; filled while that section is on screen. */
+@Composable
+private fun JumpChip(section: Section, selected: Boolean, onClick: () -> Unit) {
+    val c = Theme.colors
+    val fill by animateColorAsState(if (selected) c.safelightSoft else c.raised, tween(200), label = "chip")
+    val ink by animateColorAsState(if (selected) c.safelight else c.inkSoft, tween(200), label = "chipInk")
+    Row(
+        Modifier
+            .squish(pressedScale = 0.92f, onClick = onClick)
+            .semantics { role = Role.Tab; this.selected = selected }
+            .clip(RoundedCornerShape(50))
+            .background(fill)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(section.glyph, ink, size = 16.dp)
+        Spacer(Modifier.width(6.dp))
+        Txt(section.title, Theme.type.label, ink)
+    }
+}
+
 /** A setting with several choices: shows the current one, and opens a sheet to change it. */
 @Composable
-private fun SettingTile(value: String, status: String, onClick: () -> Unit) {
+private fun SettingTile(glyph: Glyph, label: String, value: String, status: String, onClick: () -> Unit) {
     val c = Theme.colors
     val t = Theme.type
     val shape = RoundedCornerShape(18.dp)
@@ -441,11 +550,14 @@ private fun SettingTile(value: String, status: String, onClick: () -> Unit) {
             .semantics { role = Role.Button }
             .clip(shape)
             .background(c.raised)
-            .border(1.dp, c.line, shape)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        IconBadge(glyph, c.ink, c.sunken, size = 40.dp)
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
+            Txt(label, t.caption, c.inkFaint)
+            Spacer(Modifier.height(2.dp))
             Txt(value, t.label)
             Spacer(Modifier.height(4.dp))
             Txt(status, t.caption, c.inkSoft)
@@ -460,6 +572,7 @@ private fun SettingTile(value: String, status: String, onClick: () -> Unit) {
 private fun OptionSheet(
     visible: Boolean,
     title: String,
+    glyph: Glyph,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -492,7 +605,11 @@ private fun OptionSheet(
                         .clip(CircleShape).background(c.line),
                 )
                 Spacer(Modifier.height(16.dp))
-                Txt(title, Theme.type.title, c.ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(glyph, c.safelight, c.safelightSoft)
+                    Spacer(Modifier.width(12.dp))
+                    Txt(title, Theme.type.title, c.ink)
+                }
                 Spacer(Modifier.height(16.dp))
                 content()
                 Spacer(Modifier.height(8.dp))
@@ -542,7 +659,9 @@ private fun Option(
 ) {
     val c = Theme.colors
     val t = Theme.type
-    val border by animateColorAsState(if (selected) c.safelight else c.line, tween(200), label = "border")
+    // No outline: the fill alone sets the card apart. Unselected cards sit on the sheet's own
+    // colour, so they take a faint ink wash instead.
+    val fill by animateColorAsState(if (selected) c.safelightSoft else c.line, tween(200), label = "fill")
     val dot by animateFloatAsState(if (selected) 1f else 0f, Motion.settle(), label = "dot")
     Row(
         Modifier
@@ -551,8 +670,7 @@ private fun Option(
             .then(if (enabled) Modifier.squish(pressedScale = 0.97f, onClick = onClick) else Modifier)
             .semantics { this.role = role; this.selected = selected }
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) c.safelightSoft else c.raised)
-            .border(1.dp, border, RoundedCornerShape(18.dp))
+            .background(fill)
             .padding(16.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -677,13 +795,11 @@ private fun BackupSection(state: IndexBackups.State, activeModel: String?, actio
     val c = Theme.colors
     val t = Theme.type
     LaunchedEffect(Unit) { actions.onRefresh() }
-    Txt("Backup", t.title)
-    Spacer(Modifier.height(6.dp))
-    Txt(
+    SectionHeader(
+        Section.BACKUP,
         "Save what search knows about your photos to a folder, so after a reinstall or on a new phone you restore it instead of preparing everything again.",
-        t.caption, c.inkSoft,
     )
-    Spacer(Modifier.height(18.dp))
+    Spacer(Modifier.height(16.dp))
 
     val busy = state.work != null
     if (state.folderName == null || state.lostAccess) {
@@ -773,7 +889,7 @@ private fun BackupRow(file: IndexBackups.BackupFile, activeModel: String?, enabl
     val otherModel = activeModel != null && h.models.isNotEmpty() && activeModel !in h.models
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.raised)
-            .border(1.dp, c.line, RoundedCornerShape(18.dp)).padding(16.dp),
+            .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

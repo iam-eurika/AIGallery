@@ -174,6 +174,38 @@ enum class Glyph(val draw: DrawScope.(Color, Stroke) -> Unit) {
         drawLine(c, Offset(7f, 12f), Offset(17f, 12f), s.width, StrokeCap.Round)
         drawLine(c, Offset(10f, 17f), Offset(14f, 17f), s.width, StrokeCap.Round)
     }),
+    /** Bars of a sound wave: what's heard in videos. */
+    Wave({ c, s ->
+        listOf(4f to 2.5f, 8f to 5.5f, 12f to 8.5f, 16f to 4.5f, 20f to 2f).forEach { (x, h) ->
+            drawLine(c, Offset(x, 12f - h), Offset(x, 12f + h), s.width, StrokeCap.Round)
+        }
+    }),
+    /** Speech bubble with two lines of text: spoken words. */
+    Speech({ c, s ->
+        drawPath(Path().apply {
+            moveTo(6.5f, 4.5f); lineTo(17.5f, 4.5f); quadraticTo(20.5f, 4.5f, 20.5f, 7.5f); lineTo(20.5f, 13.5f)
+            quadraticTo(20.5f, 16.5f, 17.5f, 16.5f); lineTo(12f, 16.5f); lineTo(7.5f, 20f); lineTo(7.5f, 16.5f)
+            lineTo(6.5f, 16.5f); quadraticTo(3.5f, 16.5f, 3.5f, 13.5f); lineTo(3.5f, 7.5f)
+            quadraticTo(3.5f, 4.5f, 6.5f, 4.5f); close()
+        }, c, style = s)
+        drawLine(c, Offset(7.5f, 9f), Offset(16.5f, 9f), s.width, StrokeCap.Round)
+        drawLine(c, Offset(7.5f, 12.5f), Offset(13f, 12.5f), s.width, StrokeCap.Round)
+    }),
+    /** Crescent: overnight, while the phone sleeps. */
+    Moon({ c, s ->
+        drawPath(Path().apply {
+            moveTo(20f, 14.5f)
+            cubicTo(18.8f, 18.3f, 15.3f, 20.5f, 11.8f, 20.5f)
+            cubicTo(7.2f, 20.5f, 3.5f, 16.8f, 3.5f, 12.2f)
+            cubicTo(3.5f, 8.7f, 5.7f, 5.2f, 9.5f, 4f)
+            cubicTo(8.3f, 9.8f, 13.6f, 16.2f, 20f, 14.5f)
+            close()
+        }, c, style = s)
+    }),
+    Clock({ c, s ->
+        drawCircle(c, 8.75f, Offset(12f, 12f), style = s)
+        drawPath(Path().apply { moveTo(12f, 7.5f); lineTo(12f, 12f); lineTo(15.25f, 14f) }, c, style = s)
+    }),
     /** Arrow leaving a box: "open elsewhere". */
     External({ c, s ->
         drawPath(Path().apply { moveTo(13.5f, 4f); lineTo(20f, 4f); lineTo(20f, 10.5f); moveTo(20f, 4f); lineTo(11f, 13f) }, c, style = s)
