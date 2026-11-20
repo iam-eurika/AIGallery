@@ -273,6 +273,9 @@ fun GalleryScreen(
             count = state.sections.sumOf { it.photos.size },
             indexing = state.indexing,
             modelReady = state.model is ModelStore.State.Ready,
+            filtered = !state.filter.isDefault,
+            onOpenFilter = { filterSheet = true },
+            onOpenSettings = onOpenSettings,
         )
 
         // Bottom fade + floating search, where the thumb already is.
@@ -479,7 +482,8 @@ private fun Library(
             }
         }
     }
-    PeriodScrubber(grid, marks, topInset = top + 8.dp, bottomInset = 150.dp)
+    // Starts below the floating filter/settings buttons so its handle never slides under them.
+    PeriodScrubber(grid, marks, topInset = top + 52.dp, bottomInset = 150.dp)
     }
 }
 
@@ -853,18 +857,47 @@ private fun EmptyLibrary(kind: MediaKind = MediaKind.ALL) {
 }
 
 @Composable
-private fun CompactHeader(visible: Boolean, count: Int, indexing: Indexer.Progress, modelReady: Boolean) {
+private fun CompactHeader(
+    visible: Boolean,
+    count: Int,
+    indexing: Indexer.Progress,
+    modelReady: Boolean,
+    filtered: Boolean,
+    onOpenFilter: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val c = Theme.colors
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(tween(160)) + slideInVertically { -it / 2 },
         exit = fadeOut(tween(120)),
     ) {
-        Row(
+        Box(
             Modifier.fillMaxWidth()
                 .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 4.dp),
-            horizontalArrangement = Arrangement.Center,
+            contentAlignment = Alignment.Center,
         ) {
+            // Filter and settings float top-right once the header's own buttons scroll away.
+            Row(
+                Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                IconButton(
+                    Glyph.Filter,
+                    if (filtered) "Filter and sort, active" else "Filter and sort",
+                    tint = if (filtered) c.safelight else c.inkSoft,
+                    background = c.raised.copy(alpha = 0.94f),
+                    size = 36.dp,
+                    onClick = onOpenFilter,
+                )
+                IconButton(
+                    Glyph.Settings, "Settings",
+                    tint = c.inkSoft,
+                    background = c.raised.copy(alpha = 0.94f),
+                    size = 36.dp,
+                    onClick = onOpenSettings,
+                )
+            }
             Row(
                 Modifier.clip(RoundedCornerShape(50)).background(c.raised.copy(alpha = 0.94f))
                     .padding(horizontal = 14.dp, vertical = 7.dp),
