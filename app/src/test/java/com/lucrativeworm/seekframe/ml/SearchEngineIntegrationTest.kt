@@ -68,7 +68,7 @@ class SearchEngineIntegrationTest {
                 VideoMoment(photoId = v, kind = MomentKind.SOUND, startMs = 8_000, endMs = 13_000, vector = axis(4), model = "m"),
             )
         )
-        engine = SearchEngine(embedder)
+        engine = SearchEngine(db.store, embedder)
     }
 
     private fun List<Hit>.ids() = map { it.photo.id }

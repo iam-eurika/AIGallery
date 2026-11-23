@@ -11,12 +11,15 @@ import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.interactivesegmenter.InteractiveSegmenter
 import com.google.mediapipe.tasks.vision.interactivesegmenter.InteractiveSegmenterOptions
 import com.google.mediapipe.tasks.vision.interactivesegmenter.Stroke
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.nio.ByteOrder
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.nio.ByteOrder
 
 /** A per-pixel "is this the object" confidence, 0..1, row-major. */
 class Mask(val width: Int, val height: Int, val alpha: FloatArray)
@@ -31,7 +34,8 @@ class Gesture(val points: List<Pair<Float, Float>>, val kind: Kind) {
  * Given a tap, a scribble or a lasso it returns the mask of the single object you meant. It runs
  * fully on device and ships inside the APK (~30 MB), so it works before EmbeddingGemma is ready.
  */
-class Segmenter(private val context: Context) {
+@Singleton
+class Segmenter @Inject constructor(@ApplicationContext private val context: Context) {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val inference = Dispatchers.Default.limitedParallelism(1)

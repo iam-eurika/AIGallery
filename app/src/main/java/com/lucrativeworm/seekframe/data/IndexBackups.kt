@@ -6,7 +6,11 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.util.Log
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,9 +20,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Backups of the search index in a folder the user picks once. Backing up writes a new dated
@@ -30,6 +31,7 @@ import java.util.Locale
  */
 class IndexBackups(
     private val context: Context,
+    private val store: BoxStore,
     /** The model search runs on now, or null if none is loaded. */
     private val activeModel: () -> String?,
     private val soundsOn: () -> Boolean,
@@ -211,8 +213,8 @@ class IndexBackups(
 
     /** Changes whenever vectors are added, replaced or removed. */
     private fun signature(): String {
-        val vectors = Db.store.boxFor<PhotoVector>()
-        val moments = Db.store.boxFor<VideoMoment>()
+        val vectors = store.boxFor<PhotoVector>()
+        val moments = store.boxFor<VideoMoment>()
         val newest = vectors.query().orderDesc(PhotoVector_.id).build().use { it.findFirstId() }
         return "${vectors.count()}:${moments.count()}:$newest"
     }
@@ -228,7 +230,7 @@ class IndexBackups(
 
     private fun release(tree: Uri) {
         // Don't take a grant away from a photo folder that happens to be the same tree.
-        if (Db.store.boxFor<Folder>().query(Folder_.treeUri.equal(tree.toString())).build().use { it.count() } > 0) return
+        if (store.boxFor<Folder>().query(Folder_.treeUri.equal(tree.toString())).build().use { it.count() } > 0) return
         runCatching {
             context.contentResolver.releasePersistableUriPermission(
                 tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,

@@ -10,7 +10,11 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -23,9 +27,13 @@ import kotlinx.coroutines.withContext
  * Mirrors MediaStore's images and videos into ObjectBox. Additions become [IndexState.PENDING] so the
  * indexer picks them up; edits are re-queued; deletions drop the photo and its vector.
  */
-class MediaLibrary(private val context: Context) {
+@Singleton
+class MediaLibrary @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val store: BoxStore,
+) {
 
-    private val photos = Db.store.boxFor<Photo>()
+    private val photos = store.boxFor<Photo>()
 
     data class SyncReport(val added: Int, val updated: Int, val removed: Int)
 
@@ -55,7 +63,7 @@ class MediaLibrary(private val context: Context) {
             val stale = photos.query(Source.isMediaStore()).build().use { it.find() }
             if (stale.isNotEmpty()) {
                 val ids = stale.map { it.id }.toLongArray()
-                Db.store.runInTx {
+                store.runInTx {
                     removeVectorsOf(ids)
                     photos.remove(stale)
                 }
@@ -71,7 +79,7 @@ class MediaLibrary(private val context: Context) {
         }
         if (doubles.isNotEmpty()) {
             val ids = doubles.map { it.id }.toLongArray()
-            Db.store.runInTx {
+            store.runInTx {
                 removeVectorsOf(ids)
                 photos.remove(doubles)
             }
@@ -133,7 +141,7 @@ class MediaLibrary(private val context: Context) {
         }
 
         val gone = existing.values.filter { it.mediaId !in seen }
-        Db.store.runInTx {
+        store.runInTx {
             if (toPut.isNotEmpty()) photos.put(toPut)
             if (gone.isNotEmpty()) {
                 val goneIds = gone.map { it.id }.toLongArray()
