@@ -114,6 +114,7 @@ fun SettingsScreen(
     onDownloadSpeech: () -> Unit = {},
     backups: IndexBackups.State? = null,
     backupActions: BackupActions = BackupActions(),
+    updates: UpdateSettings? = null,
 ) {
     val c = Theme.colors
     val t = Theme.type
@@ -127,7 +128,9 @@ fun SettingsScreen(
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val sections = remember(backups != null) { Section.entries.filter { it != Section.BACKUP || backups != null } }
+    val sections = remember(backups != null, updates != null) {
+        Section.entries.filter { (it != Section.BACKUP || backups != null) && (it != Section.UPDATES || updates != null) }
+    }
     val tops = remember { mutableStateMapOf<Section, Int>() }
     val nudge = with(density) { 12.dp.roundToPx() }
     val current by remember(sections) {
@@ -317,6 +320,14 @@ fun SettingsScreen(
                             BackupSection(backups, state.activeModel, backupActions)
                         }
                     }
+
+                    // ── Updates ──
+                    if (updates != null) {
+                        SectionBreak()
+                        Column(track(Section.UPDATES)) {
+                            UpdatesSection(updates)
+                        }
+                    }
                     Spacer(Modifier.height(32.dp))
                 }
             }
@@ -485,6 +496,7 @@ private enum class Section(val title: String, val glyph: Glyph) {
     VIDEOS("Videos", Glyph.Play),
     PREPARING("Preparing", Glyph.Clock),
     BACKUP("Backup", Glyph.Folder),
+    UPDATES("Updates", Glyph.Sparkle),
 }
 
 /** A glyph on a soft rounded square, so icons read as markers rather than buttons. */
@@ -788,6 +800,44 @@ class BackupActions(
     val onAuto: (Boolean) -> Unit = {},
     val onDismissMessage: () -> Unit = {},
 )
+
+/** What Settings shows about app updates, and what it can do about them. */
+class UpdateSettings(
+    val installed: String,
+    val enabled: Boolean,
+    /** Result of the last "Check now", if any. */
+    val status: String?,
+    val onEnabled: (Boolean) -> Unit,
+    val onCheckNow: () -> Unit,
+)
+
+/** The installed version, a daily check that can be turned off, and a check on demand. */
+@Composable
+private fun UpdatesSection(updates: UpdateSettings) {
+    val c = Theme.colors
+    val t = Theme.type
+    SectionHeader(
+        Section.UPDATES,
+        "New versions are published on GitHub. Checking asks GitHub which version is newest; nothing about you or your photos is sent.",
+    )
+    Spacer(Modifier.height(16.dp))
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.raised).padding(16.dp)) {
+        Txt("Version ${updates.installed}", t.label)
+        Spacer(Modifier.height(4.dp))
+        Txt(updates.status ?: "Tap below to look for a newer version now.", t.caption, c.inkFaint)
+        Spacer(Modifier.height(12.dp))
+        Pill("Check now", updates.onCheckNow)
+    }
+    Spacer(Modifier.height(10.dp))
+    Option(
+        title = "Check for updates",
+        body = "Once a day when you open the app. When there's a new version you can download it or ignore it.",
+        status = if (updates.enabled) "On" else "Off",
+        selected = updates.enabled,
+        role = Role.Switch,
+        onClick = { updates.onEnabled(!updates.enabled) },
+    )
+}
 
 /** Pick a folder once; back up there by hand or automatically; restore by tapping a backup. */
 @Composable

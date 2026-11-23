@@ -4,8 +4,9 @@ An Android photo and video gallery with on-device AI search. Type what you remem
 "receipt from the hardware store"), jump to the moment in a video where it was seen or heard,
 circle something in a photo to find more like it, read QR
 codes, and copy text straight out of pictures. **Nothing leaves the phone**: every model runs
-locally, and the network is used only to download the search model once (and to preview a QR
-link when you tap it).
+locally, and the network is used only to download the search model once, to preview a QR
+link when you tap it, and to ask GitHub once a day whether a newer version is out (which you can
+turn off in Settings).
 
 **No internet required: it works utterly offline.** Once the model is on the phone (or straight
 away if Android's own copy is used), you can switch on airplane mode and everything still works:
@@ -271,13 +272,26 @@ adb push embeddinggemma-2-text-vision-440m.litertlm /data/local/tmp/aigallery/
 - On emulators the LiteRT GPU path is avoided because the software "GPU" is slower than
   XNNPack on CPU.
 
+## Updates
+
+Once a day, on opening, the app asks GitHub for the latest release. If it's newer than the
+installed version, a sheet offers **Download update** or **Ignore** (Ignore skips that version
+until a newer one comes out). The download is the APK for this phone's ABI (or the universal one),
+checked against the release's `SHA256SUMS.txt`, then handed to Android's own installer. Settings →
+Updates shows the installed version, has *Check now*, and turns the daily check off. Debug builds
+never check on their own.
+
+The app's version comes from the git tag: tag `v1.3.0` builds `versionName 1.3.0`,
+`versionCode 10300`. Publishing a release is just pushing a `v*` tag.
+
 ## Permissions
 
 | Permission | Why |
 |---|---|
 | `READ_MEDIA_IMAGES`, `READ_MEDIA_VISUAL_USER_SELECTED` (`READ_EXTERNAL_STORAGE` ≤ API 32) | Read the photo library (full or selected) |
 | `ACCESS_MEDIA_LOCATION` | Show where a photo was taken in its details |
-| `INTERNET` | Download the model once; QR link previews on tap |
+| `INTERNET` | Download the model once; QR link previews on tap; daily update check (optional) |
+| `REQUEST_INSTALL_PACKAGES` | Hand a downloaded update to Android's installer, which asks you first |
 | `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `…_DATA_SYNC`, `…_MEDIA_PROCESSING` | Visible, cancellable background indexing |
 
 ---

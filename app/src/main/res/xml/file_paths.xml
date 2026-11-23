@@ -3,4 +3,6 @@
     <!-- Camera snaps for circle search, and lifted objects shared via clipboard or share sheet. -->
     <cache-path name="snaps" path="snaps/" />
     <cache-path name="lifts" path="lifts/" />
+    <!-- Downloaded update APKs, handed to Android's package installer. -->
+    <cache-path name="updates" path="updates/" />
 </paths>

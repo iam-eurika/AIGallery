@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Only used once, to fetch the EmbeddingGemma 2 model. All search runs offline. -->
+    <!-- Fetches the EmbeddingGemma 2 model once, and checks GitHub for app updates (can be turned
+         off in Settings). All search runs offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Hands a downloaded update APK to Android's installer; Android asks the user first. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Only to show where a photo was taken in its details; Android strips GPS without it. -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
