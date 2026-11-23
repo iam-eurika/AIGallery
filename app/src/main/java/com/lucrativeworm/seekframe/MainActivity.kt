@@ -1,6 +1,5 @@
 package com.lucrativeworm.seekframe
 
-import kotlinx.coroutines.launch
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -30,45 +29,50 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.lucrativeworm.seekframe.data.Db
 import com.lucrativeworm.seekframe.data.Folder
 import com.lucrativeworm.seekframe.data.Photo
-import io.objectbox.kotlin.boxFor
+import com.lucrativeworm.seekframe.ml.Indexer
 import com.lucrativeworm.seekframe.ui.CircleSource
 import com.lucrativeworm.seekframe.ui.CircleState
 import com.lucrativeworm.seekframe.ui.CircleViewModel
 import com.lucrativeworm.seekframe.ui.GalleryViewModel
-import com.lucrativeworm.seekframe.ui.screens.CircleActions
-import com.lucrativeworm.seekframe.ui.screens.CircleSearchScreen
 import com.lucrativeworm.seekframe.ui.SearchInput
 import com.lucrativeworm.seekframe.ui.SearchUi
 import com.lucrativeworm.seekframe.ui.components.LocalNavScope
 import com.lucrativeworm.seekframe.ui.components.LocalSharedScope
+import com.lucrativeworm.seekframe.ui.screens.BackupActions
+import com.lucrativeworm.seekframe.ui.screens.CircleActions
+import com.lucrativeworm.seekframe.ui.screens.CircleSearchScreen
 import com.lucrativeworm.seekframe.ui.screens.GalleryScreen
 import com.lucrativeworm.seekframe.ui.screens.GalleryUiState
-import com.lucrativeworm.seekframe.ui.screens.BackupActions
 import com.lucrativeworm.seekframe.ui.screens.SettingsScreen
 import com.lucrativeworm.seekframe.ui.screens.SettingsUiState
 import com.lucrativeworm.seekframe.ui.screens.SourceActions
 import com.lucrativeworm.seekframe.ui.screens.ViewerScreen
 import com.lucrativeworm.seekframe.ui.screens.WelcomeScreen
 import com.lucrativeworm.seekframe.ui.theme.GalleryTheme
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import kotlinx.coroutines.launch
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject lateinit var indexer: Indexer
+
     // Any touch tells the indexer someone is using the phone, so it yields the GPU for a moment.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        (application as GalleryApp).graph.indexer.nudge()
+        indexer.nudge()
         return super.dispatchTouchEvent(ev)
     }
 
@@ -117,12 +121,12 @@ private fun newSnapUri(context: android.content.Context): Uri {
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun Root(vm: GalleryViewModel = viewModel(), circleVm: CircleViewModel = viewModel()) {
+private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewModel = hiltViewModel()) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(hasPhotoAccess(context)) }
     var denied by rememberSaveable { mutableStateOf(false) }
     // Folder-only users never grant the photo permission; their gallery is just their folders.
-    var foldersChosen by rememberSaveable { mutableStateOf(Db.store.boxFor<Folder>().count() > 0) }
+    var foldersChosen by rememberSaveable { mutableStateOf(vm.hasFolders()) }
     var askForFolder by rememberSaveable { mutableStateOf(false) }
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.addFolder(uri)

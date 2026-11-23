@@ -10,28 +10,28 @@ import android.util.Log
 import android.util.Size
 import com.lucrativeworm.seekframe.data.AudioText
 import com.lucrativeworm.seekframe.data.AudioText_
-import com.lucrativeworm.seekframe.data.Db
 import com.lucrativeworm.seekframe.data.IndexState
 import com.lucrativeworm.seekframe.data.MomentKind
 import com.lucrativeworm.seekframe.data.Photo
+import com.lucrativeworm.seekframe.data.PhotoVector
+import com.lucrativeworm.seekframe.data.PhotoVector_
+import com.lucrativeworm.seekframe.data.Photo_
 import com.lucrativeworm.seekframe.data.VideoMoment
 import com.lucrativeworm.seekframe.data.VideoMoment_
 import com.lucrativeworm.seekframe.data.Videos
 import com.lucrativeworm.seekframe.data.requeue
-import com.lucrativeworm.seekframe.data.PhotoVector
-import com.lucrativeworm.seekframe.data.PhotoVector_
-import com.lucrativeworm.seekframe.data.Photo_
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
 import io.objectbox.query.QueryBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -59,6 +59,7 @@ data class IndexKinds(val photos: Boolean = true, val videos: Boolean = true)
  */
 class Indexer(
     private val context: Context,
+    private val store: BoxStore,
     private val embedder: Embedder,
     private val scope: CoroutineScope,
     /** The user's answer to "make sounds in videos searchable?" (null = not asked yet = no). */
@@ -71,10 +72,10 @@ class Indexer(
         val remaining: Int get() = total - indexed
     }
 
-    private val photos = Db.store.boxFor<Photo>()
-    private val vectors = Db.store.boxFor<PhotoVector>()
-    private val moments = Db.store.boxFor<VideoMoment>()
-    private val audioTexts = Db.store.boxFor<AudioText>()
+    private val photos = store.boxFor<Photo>()
+    private val vectors = store.boxFor<PhotoVector>()
+    private val moments = store.boxFor<VideoMoment>()
+    private val audioTexts = store.boxFor<AudioText>()
     private val videoIndexer = VideoIndexer(context)
     private val _progress = MutableStateFlow(Progress())
     val progress: StateFlow<Progress> = _progress.asStateFlow()
@@ -177,7 +178,7 @@ class Indexer(
      * turning it back on later picks them up.
      */
     fun forgetSounds() {
-        Db.store.runInTx {
+        store.runInTx {
             moments.query(VideoMoment_.kind.equal(MomentKind.SOUND.toLong())).build().use { it.remove() }
             audioTexts.removeAll()
             val videos = photos.query(Videos.video()).build().use { it.find() }
@@ -195,7 +196,7 @@ class Indexer(
      * back on later picks them up.
      */
     fun forgetSpeech() {
-        Db.store.runInTx {
+        store.runInTx {
             audioTexts.removeAll()
             val videos = photos.query(Videos.video()).build().use { it.find() }
             videos.forEach { it.speechState = IndexState.PENDING; it.speechDoneMs = 0 }
@@ -234,7 +235,7 @@ class Indexer(
         val ids = (stale.map { it.photoId } + staleMoments.map { it.photoId }).distinct()
         val affected = photos.get(ids).filterNotNull()
         affected.forEach { it.requeue() }
-        Db.store.runInTx {
+        store.runInTx {
             vectors.remove(stale)
             // A video is redone whole: drop its moments from this model too, or they'd double up.
             moments.query(VideoMoment_.photoId.oneOf(affected.filter { it.isVideo }.map { it.id }.toLongArray()))
@@ -297,7 +298,7 @@ class Indexer(
                         _progress.update { it.copy(indexed = (it.indexed + 1).coerceAtMost(it.total)) }
                     }
                     // One transaction per batch keeps the grid's live query from reloading per photo.
-                    Db.store.runInTx {
+                    store.runInTx {
                         vectors.put(newVectors)
                         photos.put(batch)
                     }
@@ -330,7 +331,7 @@ class Indexer(
                 },
                 commit = { list, doneMs ->
                     video.framesDoneMs = doneMs
-                    Db.store.runInTx {
+                    store.runInTx {
                         moments.put(list)
                         photos.put(video)
                     }
@@ -376,7 +377,7 @@ class Indexer(
                 },
                 commit = { list, doneMs ->
                     video.soundDoneMs = doneMs
-                    Db.store.runInTx {
+                    store.runInTx {
                         moments.put(list)
                         photos.put(video)
                     }
@@ -405,7 +406,7 @@ class Indexer(
             val pending = ArrayList<AudioText>()
             fun commit(doneMs: Long) {
                 video.speechDoneMs = doneMs
-                Db.store.runInTx {
+                store.runInTx {
                     audioTexts.put(pending)
                     photos.put(video)
                 }

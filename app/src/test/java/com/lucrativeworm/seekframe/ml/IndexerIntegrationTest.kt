@@ -12,6 +12,7 @@ import com.lucrativeworm.seekframe.testing.axis
 import io.mockk.every
 import io.mockk.mockk
 import io.objectbox.kotlin.boxFor
+import java.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +29,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.shadows.ShadowSystemClock
-import java.time.Duration
 
 /** The indexer's bookkeeping against a real ObjectBox store, with the model faked. */
 @RunWith(RobolectricTestRunner::class)
@@ -47,7 +47,7 @@ class IndexerIntegrationTest {
 
     @After fun tearDown() = scope.cancel()
 
-    private fun indexer() = Indexer(context, embedder, scope, soundsWanted = { soundsWanted })
+    private fun indexer() = Indexer(context, db.store, embedder, scope, soundsWanted = { soundsWanted })
 
     @Test
     fun `pending count covers pictures, and soundtracks only when sound is on and possible`() {

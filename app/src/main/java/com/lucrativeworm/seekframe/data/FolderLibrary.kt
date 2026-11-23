@@ -7,7 +7,12 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,7 +22,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 
 /**
  * Folders the user hands us through the system folder picker (Storage Access Framework).
@@ -26,10 +30,14 @@ import kotlin.coroutines.coroutineContext
  * cloud folders, other apps' exports. Access is per folder, read-only, granted in the system UI
  * and persisted until the user removes the folder here.
  */
-class FolderLibrary(private val context: Context) {
+@Singleton
+class FolderLibrary @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val store: BoxStore,
+) {
 
-    private val folders = Db.store.boxFor<Folder>()
-    private val photos = Db.store.boxFor<Photo>()
+    private val folders = store.boxFor<Folder>()
+    private val photos = store.boxFor<Photo>()
     private val mutex = Mutex()
 
     private val _scanning = MutableStateFlow<Set<Long>>(emptySet())
@@ -210,7 +218,7 @@ class FolderLibrary(private val context: Context) {
             .build().use { it.count() > 0 }
 
     private fun removeContents(folder: Folder) {
-        Db.store.runInTx {
+        store.runInTx {
             val own = photos.query(Photo_.folderId.equal(folder.id)).build().use { it.find() }
             removePhotos(own)
             folders.remove(folder)
@@ -237,7 +245,7 @@ class FolderLibrary(private val context: Context) {
 
     private fun removePhotos(list: List<Photo>) {
         val ids = list.map { it.id }.toLongArray()
-        Db.store.runInTx {
+        store.runInTx {
             removeVectorsOf(ids)
             photos.remove(list)
         }

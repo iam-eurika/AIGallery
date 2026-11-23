@@ -2,6 +2,8 @@ package com.lucrativeworm.seekframe.ml
 
 import com.lucrativeworm.seekframe.data.AudioText
 import com.lucrativeworm.seekframe.data.Photo
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Which speech-to-text the user wants for spoken words in videos. Stored, and picked in Settings. */
 enum class SpeechChoice {
@@ -64,7 +66,8 @@ data class SpeechStatus(
  * Unlike the sound embeddings, which capture what something sounds like ("a dog barking"), this
  * produces the actual words, so a search for something someone said can match it exactly.
  */
-class Speech(private val models: ModelStore) {
+@Singleton
+class Speech @Inject constructor(private val models: ModelStore) {
 
     private val vosk = VoskSpeech(models::speechModelDir)
 

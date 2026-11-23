@@ -5,10 +5,11 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.lucrativeworm.seekframe.GalleryApp
 import com.lucrativeworm.seekframe.MainActivity
 import com.lucrativeworm.seekframe.data.Db
 import com.lucrativeworm.seekframe.data.Folder
+import com.lucrativeworm.seekframe.di.AppEntryPoint
+import dagger.hilt.android.EntryPointAccessors
 import io.objectbox.kotlin.boxFor
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -17,7 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The whole app, started the way a user starts it: the real Application builds its graph and
+ * The whole app, started the way a user starts it: the real Application builds its Hilt graph and
  * database, and a fresh install without photo access lands on the welcome screen.
  */
 @RunWith(AndroidJUnit4::class)
@@ -27,10 +28,10 @@ class AppLaunchTest {
 
     @Test
     fun applicationGraphIsWired() {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as GalleryApp
-        val graph = app.graph
-        assertTrue(graph.indexer.progress.value.total >= 0)
-        assertTrue(graph.models.choice.value.name.isNotEmpty())
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val graph = EntryPointAccessors.fromApplication(app, AppEntryPoint::class.java)
+        assertTrue(graph.indexer().progress.value.total >= 0)
+        assertTrue(graph.models().choice.value.name.isNotEmpty())
     }
 
     @Test

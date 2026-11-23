@@ -7,6 +7,7 @@ import com.lucrativeworm.seekframe.ml.Embedder
 import com.lucrativeworm.seekframe.ml.SearchEngine
 import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
+import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -16,7 +17,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /**
  * The Android ObjectBox build (the one that ships) with the HNSW vector index, live queries,
@@ -66,7 +66,7 @@ class OnDeviceStoreTest {
             )
         )
         // The embedder isn't touched by "similar", so no model has to be downloaded.
-        val hits = SearchEngine(Embedder(context)).similarTo(beach)
+        val hits = SearchEngine(store, Embedder(context)).similarTo(beach)
         assertEquals(listOf(beach2), hits.map { it.photo.id })
     }
 

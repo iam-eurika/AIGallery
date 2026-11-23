@@ -1,25 +1,28 @@
 package com.lucrativeworm.seekframe.ml
 
 import android.content.Context
-import com.lucrativeworm.seekframe.data.Db
-import com.lucrativeworm.seekframe.data.PhotoVector
-import com.lucrativeworm.seekframe.data.VideoMoment
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
-import kotlinx.coroutines.withContext
+import com.lucrativeworm.seekframe.data.PhotoVector
+import com.lucrativeworm.seekframe.data.VideoMoment
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.objectbox.BoxStore
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 
 /** Which EmbeddingGemma 2 the user wants search to run on. Stored, and picked in Settings. */
 enum class ModelChoice {
@@ -79,7 +82,11 @@ object SpeechModel {
  *   adb push embeddinggemma-2-text-vision-440m.litertlm /data/local/tmp/aigallery/
  *   adb push embeddinggemma-2-740m.litertlm /data/local/tmp/aigallery/
  */
-class ModelStore(private val context: Context) {
+@Singleton
+class ModelStore @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val store: BoxStore,
+) {
 
     /** Where a ready model lives; [Embedder] loads whichever this names. */
     sealed interface Source {
@@ -219,8 +226,8 @@ class ModelStore(private val context: Context) {
 
     /** The model id the existing index was built with, or null while nothing is indexed. */
     private suspend fun indexedWith(): String? = withContext(Dispatchers.IO) {
-        Db.store.boxFor(PhotoVector::class.java).query().build().use { it.findFirst() }?.model
-            ?: Db.store.boxFor(VideoMoment::class.java).query().build().use { it.findFirst() }?.model
+        store.boxFor(PhotoVector::class.java).query().build().use { it.findFirst() }?.model
+            ?: store.boxFor(VideoMoment::class.java).query().build().use { it.findFirst() }?.model
     }
 
     private suspend fun systemState(status: SystemModelStatus): State? = when (status) {

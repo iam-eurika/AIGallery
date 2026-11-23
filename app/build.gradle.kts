@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.hilt)
     // Must come last: it inspects the plugins above to wire up its annotation processor.
     alias(libs.plugins.objectbox)
 }
@@ -116,6 +117,14 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.exifinterface)
+
+    // Dependency injection: one app-wide graph of singletons, injected into the activity,
+    // ViewModels and the background indexing worker.
+    implementation(libs.hilt.android)
+    kapt(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.work)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
+    kapt(libs.androidx.hilt.compiler)
 
     // EmbeddingGemma 2, two ways: Android's own copy through ML Kit GenAI (AICore devices), or
     // the bundled LiteRT-LM model through MediaPipe's UniversalEmbedder everywhere else.

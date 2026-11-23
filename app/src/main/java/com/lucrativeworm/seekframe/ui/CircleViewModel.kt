@@ -7,13 +7,19 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.lucrativeworm.seekframe.GalleryApp
 import com.lucrativeworm.seekframe.data.Photo
+import com.lucrativeworm.seekframe.ml.Embedder
+import com.lucrativeworm.seekframe.ml.EmbedderLoader
 import com.lucrativeworm.seekframe.ml.Hit
 import com.lucrativeworm.seekframe.ml.Lift
 import com.lucrativeworm.seekframe.ml.Lifter
+import com.lucrativeworm.seekframe.ml.SearchEngine
+import com.lucrativeworm.seekframe.ml.Segmenter
 import com.lucrativeworm.seekframe.ml.Stickers
 import com.lucrativeworm.seekframe.ml.decodeArgb
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,7 +29,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.max
 
 /** What the user is circling in: a photo from the library, or a fresh camera snap. */
 sealed interface CircleSource {
@@ -51,9 +56,14 @@ data class CircleState(
     val finds: Finds = Finds.None,
 )
 
-class CircleViewModel(app: Application) : AndroidViewModel(app) {
-
-    private val graph = (app as GalleryApp).graph
+@HiltViewModel
+class CircleViewModel @Inject constructor(
+    app: Application,
+    private val segmenter: Segmenter,
+    private val embedder: Embedder,
+    private val embedderLoader: EmbedderLoader,
+    private val searchEngine: SearchEngine,
+) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(CircleState())
     val state: StateFlow<CircleState> = _state.asStateFlow()
     private var work: Job? = null
@@ -90,7 +100,7 @@ class CircleViewModel(app: Application) : AndroidViewModel(app) {
         work = viewModelScope.launch {
             try {
                 val gesture = Lifter.gesture(points, image.width / image.height.toFloat())
-                val mask = graph.segmenter.segment(segmenterInput(image), gesture)
+                val mask = segmenter.segment(segmenterInput(image), gesture)
                 val lift = withContext(Dispatchers.Default) { Lifter.lift(image, mask, gesture) }
                 _state.update { it.copy(lifting = false, lift = lift, liftId = it.liftId + 1) }
                 find(lift.query)
@@ -117,13 +127,13 @@ class CircleViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun find(query: Bitmap) {
-        if (!graph.embedder.isReady && !graph.ensureEmbedder()) {
+        if (!embedder.isReady && !embedderLoader.ensureLoaded()) {
             _state.update { it.copy(finds = Finds.NeedsModel) }
             return
         }
         _state.update { it.copy(finds = Finds.Searching) }
         val start = SystemClock.elapsedRealtime()
-        val hits = runCatching { graph.search.searchByImage(query) }
+        val hits = runCatching { searchEngine.searchByImage(query) }
             .onFailure { if (it is CancellationException) throw it; Log.e(TAG, "Image search failed", it) }
             .getOrDefault(emptyList())
             // A photo is always its own best match; showing it back would be noise.
@@ -146,7 +156,7 @@ class CircleViewModel(app: Application) : AndroidViewModel(app) {
     fun close() {
         work?.cancel()
         _state.value = CircleState()
-        viewModelScope.launch { graph.segmenter.forget() }
+        viewModelScope.launch { segmenter.forget() }
     }
 
     private suspend fun decode(uri: Uri): Bitmap =

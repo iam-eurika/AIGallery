@@ -11,6 +11,10 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.retrieval.universalembedder.UniversalEmbedder
 import com.google.mediapipe.tasks.retrieval.universalembedder.UniversalEmbedderOptions
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +23,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Thin, thread-safe wrapper around EmbeddingGemma 2, run either by Android itself through ML Kit
@@ -28,7 +31,8 @@ import java.io.File
  * All inference goes through one [Mutex]. Kotlin's mutex is fair, so a search query that arrives
  * while the indexer is busy waits for at most one image instead of the whole batch.
  */
-class Embedder(private val context: Context) {
+@Singleton
+class Embedder @Inject constructor(@ApplicationContext private val context: Context) {
 
     enum class Backend { SYSTEM, GPU, CPU }
 

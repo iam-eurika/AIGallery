@@ -2,15 +2,17 @@ package com.lucrativeworm.seekframe.ml
 
 import com.lucrativeworm.seekframe.data.AudioText
 import com.lucrativeworm.seekframe.data.AudioText_
-import com.lucrativeworm.seekframe.data.Db
 import com.lucrativeworm.seekframe.data.MomentKind
 import com.lucrativeworm.seekframe.data.Photo
 import com.lucrativeworm.seekframe.data.PhotoVector
 import com.lucrativeworm.seekframe.data.PhotoVector_
 import com.lucrativeworm.seekframe.data.VideoMoment
 import com.lucrativeworm.seekframe.data.VideoMoment_
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
 import io.objectbox.query.QueryBuilder
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -31,12 +33,16 @@ data class Hit(
  * Semantic search over the ObjectBox HNSW index. Text and images share EmbeddingGemma 2's vector
  * space, so the same nearest-neighbour query serves typed searches and "more like this".
  */
-class SearchEngine(private val embedder: Embedder) {
+@Singleton
+class SearchEngine @Inject constructor(
+    private val store: BoxStore,
+    private val embedder: Embedder,
+) {
 
-    private val photos = Db.store.boxFor<Photo>()
-    private val vectors = Db.store.boxFor<PhotoVector>()
-    private val moments = Db.store.boxFor<VideoMoment>()
-    private val audioTexts = Db.store.boxFor<AudioText>()
+    private val photos = store.boxFor<Photo>()
+    private val vectors = store.boxFor<PhotoVector>()
+    private val moments = store.boxFor<VideoMoment>()
+    private val audioTexts = store.boxFor<AudioText>()
 
     suspend fun search(query: String): List<Hit> {
         val vector = embedder.embedText(query.trim())

@@ -1,32 +1,47 @@
 package com.lucrativeworm.seekframe.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.lucrativeworm.seekframe.GalleryApp
-import android.net.Uri
-import com.lucrativeworm.seekframe.data.Db
 import com.lucrativeworm.seekframe.data.Folder
+import com.lucrativeworm.seekframe.data.FolderLibrary
 import com.lucrativeworm.seekframe.data.Folder_
+import com.lucrativeworm.seekframe.data.IndexBackups
+import com.lucrativeworm.seekframe.data.IndexState
+import com.lucrativeworm.seekframe.data.MediaLibrary
 import com.lucrativeworm.seekframe.data.Photo
 import com.lucrativeworm.seekframe.data.Photo_
-import com.lucrativeworm.seekframe.data.IndexState
+import com.lucrativeworm.seekframe.data.SourceSync
 import com.lucrativeworm.seekframe.data.asFlow
+import com.lucrativeworm.seekframe.di.ApplicationScope
+import com.lucrativeworm.seekframe.ml.Embedder
+import com.lucrativeworm.seekframe.ml.EmbedderLoader
 import com.lucrativeworm.seekframe.ml.Hit
 import com.lucrativeworm.seekframe.ml.IndexSchedule
+import com.lucrativeworm.seekframe.ml.Indexer
 import com.lucrativeworm.seekframe.ml.ModelChoice
 import com.lucrativeworm.seekframe.ml.ModelStore
-import com.lucrativeworm.seekframe.ml.decodeArgb
+import com.lucrativeworm.seekframe.ml.SearchEngine
 import com.lucrativeworm.seekframe.ml.SystemModelStatus
+import com.lucrativeworm.seekframe.ml.decodeArgb
 import com.lucrativeworm.seekframe.work.IndexScheduler
+import dagger.hilt.android.lifecycle.HiltViewModel
+import io.objectbox.BoxStore
 import io.objectbox.kotlin.boxFor
 import io.objectbox.query.QueryBuilder
+import java.time.Instant
+import java.time.YearMonth
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,10 +56,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.Instant
-import java.time.YearMonth
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** A photo attached to the search field: one from the library, or one picked with the system picker. */
 sealed interface SearchPhoto {
@@ -117,30 +128,43 @@ internal fun groupByMonth(
 }
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-class GalleryViewModel(app: Application) : AndroidViewModel(app) {
+@HiltViewModel
+class GalleryViewModel @Inject constructor(
+    app: Application,
+    store: BoxStore,
+    private val library: MediaLibrary,
+    private val folderLibrary: FolderLibrary,
+    private val models: ModelStore,
+    private val embedder: Embedder,
+    private val embedderLoader: EmbedderLoader,
+    private val indexer: Indexer,
+    private val searchEngine: SearchEngine,
+    private val indexBackups: IndexBackups,
+    private val sources: SourceSync,
+    private val scheduler: IndexScheduler,
+    @ApplicationScope private val appScope: CoroutineScope,
+) : AndroidViewModel(app) {
 
-    private val graph = (app as GalleryApp).graph
+    val modelState: StateFlow<ModelStore.State> = models.state
+    val modelChoice: StateFlow<ModelChoice> = models.choice
+    val systemModel: StateFlow<SystemModelStatus> = models.systemStatus
+    val embedderBackend: StateFlow<String?> = embedder.model
 
-    val modelState: StateFlow<ModelStore.State> = graph.models.state
-    val modelChoice: StateFlow<ModelChoice> = graph.models.choice
-    val systemModel: StateFlow<SystemModelStatus> = graph.models.systemStatus
-    val embedderBackend: StateFlow<String?> = graph.embedder.model
-
-    fun bundledDownloaded(): Boolean = graph.models.bundledDownloaded()
+    fun bundledDownloaded(): Boolean = models.bundledDownloaded()
 
     /** Whether sounds in videos are searchable; null until the user has answered. */
-    val sounds: StateFlow<Boolean?> = graph.models.sounds
-    val soundModelMissing: StateFlow<Boolean> = graph.models.soundModelMissing
-    val soundDownload: StateFlow<ModelStore.State?> = graph.models.soundDownload
+    val sounds: StateFlow<Boolean?> = models.sounds
+    val soundModelMissing: StateFlow<Boolean> = models.soundModelMissing
+    val soundDownload: StateFlow<ModelStore.State?> = models.soundDownload
 
-    fun modelHears(): Boolean = graph.embedder.supportsAudio
+    fun modelHears(): Boolean = embedder.supportsAudio
 
     /** What saying yes to sounds would cost right now, in a few words for the question. */
     fun soundsCost(): String {
-        val active = graph.embedder.modelId
+        val active = embedder.modelId
         return when {
-            graph.embedder.supportsAudio -> "Nothing to download: the model on this phone already hears."
-            graph.models.bundledFile(com.lucrativeworm.seekframe.ml.Variant.FULL) != null -> "Nothing to download."
+            embedder.supportsAudio -> "Nothing to download: the model on this phone already hears."
+            models.bundledFile(com.lucrativeworm.seekframe.ml.Variant.FULL) != null -> "Nothing to download."
             active == null -> "The model download grows from about ${com.lucrativeworm.seekframe.ml.Variant.VISION.approxMb} MB to ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB."
             active.startsWith("mlkit:") -> "Android's built-in model can't hear, so the app downloads its own (about ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB) and prepares your library again with it."
             else -> "It replaces the downloaded model with a larger one (about ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB) and prepares your library again."
@@ -153,14 +177,14 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
      * soundtrack vectors. Either way the answer sticks and can be changed in Settings.
      */
     fun setSounds(on: Boolean) {
-        val before = graph.models.sounds.value
-        graph.models.setSounds(on)
+        val before = models.sounds.value
+        models.setSounds(on)
         viewModelScope.launch {
-            if (!on && before == true) graph.indexer.forgetSounds()
-            graph.models.locate()
-            if (on && graph.models.soundModelMissing.value) downloadSoundModel()
+            if (!on && before == true) indexer.forgetSounds()
+            models.locate()
+            if (on && models.soundModelMissing.value) downloadSoundModel()
             loadModel()
-            graph.indexer.refreshCounts()
+            indexer.refreshCounts()
         }
     }
 
@@ -169,29 +193,29 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadSoundModel() {
         if (soundJob?.isActive == true) return
         soundJob = viewModelScope.launch {
-            runCatching { graph.models.downloadSoundModel() }
+            runCatching { models.downloadSoundModel() }
                 .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Sound model download failed", it) }
             loadModel()
-            graph.indexer.refreshCounts()
+            indexer.refreshCounts()
         }
     }
 
     /** Spoken words in videos: which speech-to-text the user chose, what this phone offers, downloads. */
-    val speech: StateFlow<com.lucrativeworm.seekframe.ml.SpeechStatus> = graph.models.speech
+    val speech: StateFlow<com.lucrativeworm.seekframe.ml.SpeechStatus> = models.speech
 
     /**
      * The user picked a speech-to-text option. [download] is their go-ahead to fetch what it needs
      * right away (the prompt's buttons say so); from Settings the download is its own tap.
      */
     fun chooseSpeech(choice: com.lucrativeworm.seekframe.ml.SpeechChoice, download: Boolean = false) {
-        val before = graph.models.speech.value.choice
-        graph.models.setSpeechChoice(choice)
+        val before = models.speech.value.choice
+        models.setSpeechChoice(choice)
         viewModelScope.launch {
             if (choice == com.lucrativeworm.seekframe.ml.SpeechChoice.OFF && before != null && before != choice) {
-                withContext(Dispatchers.IO) { graph.indexer.forgetSpeech() }
+                withContext(Dispatchers.IO) { indexer.forgetSpeech() }
             }
-            graph.indexer.refreshCounts()
-            if (download && graph.models.speech.value.toFetch != null) downloadSpeech() else startIndexing()
+            indexer.refreshCounts()
+            if (download && models.speech.value.toFetch != null) downloadSpeech() else startIndexing()
         }
     }
 
@@ -201,34 +225,34 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadSpeech() {
         if (speechJob?.isActive == true) return
         speechJob = viewModelScope.launch {
-            runCatching { graph.models.downloadSpeech() }
+            runCatching { models.downloadSpeech() }
                 .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Speech model download failed", it) }
-            graph.indexer.refreshCounts()
+            indexer.refreshCounts()
             startIndexing()
         }
     }
 
     /** Settings: switch models. Loads the new one if it's ready and re-indexes what it must. */
     fun setModelChoice(choice: ModelChoice) {
-        if (graph.models.choice.value == choice) return
-        graph.models.setChoice(choice)
+        if (models.choice.value == choice) return
+        models.setChoice(choice)
         viewModelScope.launch { loadModel() }
     }
-    val indexing = graph.indexer.progress
-    val indexingPaused = graph.indexer.paused
+    val indexing = indexer.progress
+    val indexingPaused = indexer.paused
 
     fun setIndexingPaused(paused: Boolean) {
-        graph.indexer.setPaused(paused)
+        indexer.setPaused(paused)
         if (!paused) startIndexing(now = true)
     }
 
-    val indexSchedule: StateFlow<IndexSchedule?> = graph.indexer.schedule
+    val indexSchedule: StateFlow<IndexSchedule?> = indexer.schedule
 
     /** Which kinds (photos, videos) the user wants prepared right now. */
-    val indexKinds: StateFlow<com.lucrativeworm.seekframe.ml.IndexKinds> = graph.indexer.kinds
+    val indexKinds: StateFlow<com.lucrativeworm.seekframe.ml.IndexKinds> = indexer.kinds
 
     fun setIndexKinds(kinds: com.lucrativeworm.seekframe.ml.IndexKinds) {
-        graph.indexer.setKinds(kinds)
+        indexer.setKinds(kinds)
         // A running pass picks the change up by itself; otherwise start one for what's now ticked.
         startIndexing()
     }
@@ -238,20 +262,22 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
      * right before the first pass, so it never starts in the middle of their day unannounced.
      */
     val needsIndexSchedule: StateFlow<Boolean> =
-        combine(graph.indexer.schedule, graph.embedder.ready, graph.indexer.progress) { schedule, ready, progress ->
+        combine(indexer.schedule, embedder.ready, indexer.progress) { schedule, ready, progress ->
             schedule == null && ready && progress.remaining > 0
         }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     fun setIndexSchedule(schedule: IndexSchedule) {
-        if (graph.indexer.schedule.value == schedule) return
-        graph.indexer.setSchedule(schedule)
-        IndexScheduler.reschedule(getApplication())
+        if (indexer.schedule.value == schedule) return
+        indexer.setSchedule(schedule)
+        scheduler.reschedule()
         // Switching to "when idle" while a pass is running in the app: hand it to the idle job.
-        if (schedule == IndexSchedule.WHEN_IDLE) graph.indexer.stop()
+        if (schedule == IndexSchedule.WHEN_IDLE) indexer.stop()
         startIndexing()
     }
 
-    private val allPhotos = Db.store.boxFor<Photo>().query()
+    private val folderBox = store.boxFor<Folder>()
+
+    private val allPhotos = store.boxFor<Photo>().query()
         .order(Photo_.dateTaken, QueryBuilder.DESCENDING)
         .build()
         .asFlow()
@@ -312,12 +338,12 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     /** False until the model choice has been checked once, so "download the model" never flashes. */
-    val modelChecked: StateFlow<Boolean> = graph.models.checked
+    val modelChecked: StateFlow<Boolean> = models.checked
 
     val input = MutableStateFlow<SearchInput>(SearchInput.None)
 
     private val readyModel = modelState.map { (it as? ModelStore.State.Ready)?.source?.id }.distinctUntilChanged()
-    private val embedderReady = graph.embedder.ready
+    private val embedderReady = embedder.ready
 
     val search: StateFlow<SearchUi> = combine(input, embedderReady) { i, ready -> i to ready }
         // Wait out typing; attaching or removing a photo searches right away.
@@ -336,7 +362,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                             is SearchInput.Query -> {
                                 val images = i.photos.mapNotNull { vectorFor(it) }
                                 val exclude = i.photos.mapNotNullTo(HashSet()) { (it as? SearchPhoto.Library)?.photo?.id }
-                                graph.search.searchMixed(images, i.text, exclude)
+                                searchEngine.searchMixed(images, i.text, exclude)
                             }
                             SearchInput.None -> emptyList()
                         }
@@ -359,48 +385,51 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun start() {
         if (started) return
         started = true
-        IndexScheduler.install(getApplication())
+        scheduler.install()
         viewModelScope.launch {
-            graph.syncSources()
+            sources.syncAll()
             synced.value = true
             loadModel()
         }
         viewModelScope.launch {
-            graph.library.changes().debounce(1_200).collect {
-                runCatching { graph.library.sync() }
-                runCatching { graph.folders.dedupe() }
-                graph.indexer.refreshCounts()
+            library.changes().debounce(1_200).collect {
+                runCatching { library.sync() }
+                runCatching { folderLibrary.dedupe() }
+                indexer.refreshCounts()
                 startIndexing()
             }
         }
         viewModelScope.launch {
-            readyModel.collect { id -> if (id != null && graph.embedder.modelId != id) loadModel() }
+            readyModel.collect { id -> if (id != null && embedder.modelId != id) loadModel() }
         }
     }
 
-    val folders: StateFlow<List<Folder>> = Db.store.boxFor<Folder>().query()
+    /** Whether the user has picked any folder yet (folder-only users never grant photo access). */
+    fun hasFolders(): Boolean = folderBox.count() > 0
+
+    val folders: StateFlow<List<Folder>> = folderBox.query()
         .order(Folder_.addedAt)
         .build()
         .asFlow()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val scanningFolders = graph.folders.scanning
+    val scanningFolders = folderLibrary.scanning
 
     /** The user picked a folder in the system picker: take the grant, walk it, index it. */
     fun addFolder(treeUri: Uri) {
         viewModelScope.launch {
-            val folder = runCatching { graph.folders.add(treeUri) }
+            val folder = runCatching { folderLibrary.add(treeUri) }
                 .onFailure { Log.e(TAG, "Could not keep access to $treeUri", it) }
                 .getOrNull() ?: return@launch
-            runCatching { graph.folders.sync(folder) }
-            graph.indexer.refreshCounts()
+            runCatching { folderLibrary.sync(folder) }
+            indexer.refreshCounts()
             startIndexing()
         }
     }
 
     fun removeFolder(folder: Folder) {
         viewModelScope.launch {
-            graph.folders.remove(folder)
-            graph.indexer.refreshCounts()
+            folderLibrary.remove(folder)
+            indexer.refreshCounts()
         }
     }
 
@@ -408,9 +437,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun onMediaAccessChanged() {
         if (!started) return
         viewModelScope.launch {
-            runCatching { graph.library.sync() }
-            runCatching { graph.folders.dedupe() }
-            graph.indexer.refreshCounts()
+            runCatching { library.sync() }
+            runCatching { folderLibrary.dedupe() }
+            indexer.refreshCounts()
             startIndexing()
         }
     }
@@ -419,8 +448,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshFolders() {
         if (!started) return
         viewModelScope.launch {
-            runCatching { graph.folders.syncAll() }
-            graph.indexer.refreshCounts()
+            runCatching { folderLibrary.syncAll() }
+            indexer.refreshCounts()
             startIndexing()
         }
     }
@@ -428,12 +457,12 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadModel() {
         if (downloadJob?.isActive == true) return
         downloadJob = viewModelScope.launch {
-            runCatching { graph.models.download() }
+            runCatching { models.download() }
         }
     }
 
     private suspend fun loadModel() {
-        if (graph.ensureEmbedder()) startIndexing()
+        if (embedderLoader.ensureLoaded()) startIndexing()
     }
 
     /**
@@ -445,43 +474,43 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
      * in "when idle" mode, so choosing overnight never locks them out of indexing during the day.
      */
     private fun startIndexing(now: Boolean = false) {
-        if (!graph.embedder.isReady) return
-        when (graph.indexer.schedule.value) {
+        if (!embedder.isReady) return
+        when (indexer.schedule.value) {
             null -> return
-            IndexSchedule.WHEN_IDLE -> if (now) graph.indexer.start()
-            IndexSchedule.ANYTIME -> graph.indexer.start()
+            IndexSchedule.WHEN_IDLE -> if (now) indexer.start()
+            IndexSchedule.ANYTIME -> indexer.start()
         }
-        if (graph.indexer.pendingCount() > 0) IndexScheduler.runNow(getApplication())
+        if (indexer.pendingCount() > 0) scheduler.runNow()
     }
 
     /** Backups of the search index, in a folder the user picks once. */
-    val backups: StateFlow<com.lucrativeworm.seekframe.data.IndexBackups.State> = graph.backups.state
+    val backups: StateFlow<com.lucrativeworm.seekframe.data.IndexBackups.State> = indexBackups.state
 
     fun setBackupFolder(treeUri: Uri) {
-        viewModelScope.launch { graph.backups.setFolder(treeUri) }
+        viewModelScope.launch { indexBackups.setFolder(treeUri) }
     }
 
-    fun setAutoBackup(on: Boolean) = graph.backups.setAuto(on)
+    fun setAutoBackup(on: Boolean) = indexBackups.setAuto(on)
 
     fun refreshBackups() {
-        viewModelScope.launch { graph.backups.refresh() }
+        viewModelScope.launch { indexBackups.refresh() }
     }
 
     fun backupNow() {
         // App-scoped: leaving Settings mid-backup must not leave half a file behind.
-        graph.scope.launch { graph.backups.backupNow() }
+        appScope.launch { indexBackups.backupNow() }
     }
 
     fun restoreBackup(file: com.lucrativeworm.seekframe.data.IndexBackups.BackupFile) {
-        graph.scope.launch {
-            graph.backups.restore(file)
-            graph.indexer.refreshCounts()
+        appScope.launch {
+            indexBackups.restore(file)
+            indexer.refreshCounts()
             // Whatever the backup didn't cover is indexed as usual.
             kotlinx.coroutines.withContext(Dispatchers.Main) { startIndexing() }
         }
     }
 
-    fun clearBackupMessage() = graph.backups.clearMessage()
+    fun clearBackupMessage() = indexBackups.clearMessage()
 
     fun type(text: String) {
         val photos = (input.value as? SearchInput.Query)?.photos.orEmpty()
@@ -509,17 +538,17 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val attachedVectors = HashMap<String, FloatArray>()
 
     private suspend fun vectorFor(photo: SearchPhoto): FloatArray? {
-        val key = "${graph.embedder.modelId}:${photo.key}"
+        val key = "${embedder.modelId}:${photo.key}"
         attachedVectors[key]?.let { return it }
         // An indexed library photo already has its vector; anything else is embedded on the spot.
-        val stored = (photo as? SearchPhoto.Library)?.let { graph.search.storedVector(it.photo.id) }
+        val stored = (photo as? SearchPhoto.Library)?.let { searchEngine.storedVector(it.photo.id) }
         val vector = stored ?: runCatching {
             val uri = when (photo) {
                 is SearchPhoto.Library -> Uri.parse(photo.photo.uri)
                 is SearchPhoto.Picked -> photo.uri
             }
             val bitmap = decodeArgb(getApplication<Application>().contentResolver, uri, EMBED_PX)
-            graph.embedder.embedImage(bitmap)
+            embedder.embedImage(bitmap)
         }.onFailure { if (it is CancellationException) throw it; Log.e(TAG, "Could not read attached photo", it) }
             .getOrNull() ?: return null
         if (attachedVectors.size > 32) attachedVectors.clear()
@@ -529,8 +558,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Deletes picked-folder photos for good; returns how many couldn't be deleted. */
     suspend fun deleteFolderPhotos(list: List<Photo>): Int {
-        val failed = graph.folders.delete(list)
-        graph.indexer.refreshCounts()
+        val failed = folderLibrary.delete(list)
+        indexer.refreshCounts()
         return failed
     }
 
@@ -544,7 +573,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun similar(photo: Photo): List<Hit> =
-        if (graph.embedder.isReady) runCatching { graph.search.similarTo(photo.id) }.getOrDefault(emptyList()) else emptyList()
+        if (embedder.isReady) runCatching { searchEngine.similarTo(photo.id) }.getOrDefault(emptyList()) else emptyList()
 
     private companion object {
         const val TAG = "GalleryVM"
