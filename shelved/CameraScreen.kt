@@ -1,4 +1,4 @@
-package com.lucrativeworm.aigallery.ui.screens
+package com.lucrativeworm.seekframe.ui.screens
 
 import android.Manifest
 import android.content.Context
@@ -82,15 +82,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.lucrativeworm.aigallery.ml.QrCode
-import com.lucrativeworm.aigallery.ml.QrScanner
-import com.lucrativeworm.aigallery.ui.components.Glyph
-import com.lucrativeworm.aigallery.ui.components.IconButton
-import com.lucrativeworm.aigallery.ui.components.QrChip
-import com.lucrativeworm.aigallery.ui.components.QrSheet
-import com.lucrativeworm.aigallery.ui.components.Txt
-import com.lucrativeworm.aigallery.ui.components.squish
-import com.lucrativeworm.aigallery.ui.theme.Theme
+import com.lucrativeworm.seekframe.ml.QrCode
+import com.lucrativeworm.seekframe.ml.QrScanner
+import com.lucrativeworm.seekframe.ui.components.Glyph
+import com.lucrativeworm.seekframe.ui.components.IconButton
+import com.lucrativeworm.seekframe.ui.components.QrChip
+import com.lucrativeworm.seekframe.ui.components.QrSheet
+import com.lucrativeworm.seekframe.ui.components.Txt
+import com.lucrativeworm.seekframe.ui.components.squish
+import com.lucrativeworm.seekframe.ui.theme.Theme
 import java.io.File
 import kotlin.math.roundToInt
 

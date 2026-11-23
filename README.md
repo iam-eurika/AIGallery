@@ -1,4 +1,4 @@
-# AI Gallery
+# SeekFrame
 
 An Android photo and video gallery with on-device AI search. Type what you remember ("dog on the beach",
 "receipt from the hardware store"), jump to the moment in a video where it was seen or heard,
@@ -16,7 +16,7 @@ code.
 > **Work in progress:** video indexing isn't working yet. Videos browse and play normally, but
 > searching inside them (what's seen or heard) is still being worked on.
 
-- Package: `com.lucrativeworm.aigallery`
+- Package: `com.lucrativeworm.seekframe`
 - Kotlin + Jetpack Compose, minSdk 29, target/compile SDK 37, AGP 9.5
 - ABIs: `arm64-v8a`, `x86_64`
 
@@ -196,7 +196,7 @@ bundled model, and search, similar photos and circle to search work the same.
 ## Architecture
 
 ```
-app/src/main/java/com/lucrativeworm/aigallery/
+app/src/main/java/com/lucrativeworm/seekframe/
 ├── GalleryApp.kt          Application + hand-rolled dependency graph (no DI framework)
 ├── MainActivity.kt        Root composable, permissions, back stack (Viewing / Circling / Configuring)
 ├── data/

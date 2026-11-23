@@ -10,13 +10,13 @@ plugins {
 }
 
 android {
-    namespace = "com.lucrativeworm.aigallery"
+    namespace = "com.lucrativeworm.seekframe"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.lucrativeworm.aigallery"
+        applicationId = "com.lucrativeworm.seekframe"
         minSdk = 29
         targetSdk = 37
         versionCode = 1

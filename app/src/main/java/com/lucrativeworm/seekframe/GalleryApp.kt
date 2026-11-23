@@ -1,0 +1,117 @@
+package com.lucrativeworm.seekframe
+
+import android.app.Application
+import android.util.Log
+import com.lucrativeworm.seekframe.data.Db
+import com.lucrativeworm.seekframe.data.FolderLibrary
+import com.lucrativeworm.seekframe.data.IndexBackups
+import com.lucrativeworm.seekframe.data.MediaLibrary
+import com.lucrativeworm.seekframe.ml.Embedder
+import com.lucrativeworm.seekframe.ml.Indexer
+import com.lucrativeworm.seekframe.ml.ModelStore
+import com.lucrativeworm.seekframe.ml.SearchEngine
+import com.lucrativeworm.seekframe.ml.Segmenter
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+class GalleryApp : Application() {
+
+    /** Hand-rolled graph; the app is small enough that a DI framework would only add weight. */
+    lateinit var graph: Graph
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        Db.init(this)
+        graph = Graph(this)
+    }
+
+    class Graph(app: Application) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val library = MediaLibrary(app)
+        val folders = FolderLibrary(app)
+        val models = ModelStore(app)
+        val embedder = Embedder(app)
+        val speech = com.lucrativeworm.seekframe.ml.Speech(models)
+        val indexer = Indexer(app, embedder, scope, soundsWanted = { models.sounds.value == true }, speech = speech)
+        val search = SearchEngine(embedder)
+        val segmenter = Segmenter(app)
+        val backups = IndexBackups(
+            app,
+            activeModel = { embedder.modelId },
+            soundsOn = { models.sounds.value == true },
+            pauseIndexing = { indexer.stopAndJoin() },
+            syncSources = { syncSources() },
+        )
+
+        init {
+            // Whether Android offers its speech model decides the default speech engine.
+            scope.launch {
+                runCatching { models.checkAndroidSpeech() }
+                    .onFailure { if (it is CancellationException) throw it; Log.w("GalleryApp", "Speech check failed", it) }
+            }
+            // Whenever an indexing pass stops (done, paused, or stopped by the system), save the
+            // index if auto backup is on and there is something new.
+            scope.launch {
+                indexer.progress.map { it.running }.distinctUntilChanged().drop(1).filter { !it }.collect {
+                    runCatching { backups.autoBackupIfDue(indexer.pendingCount()) }
+                        .onFailure { if (it is CancellationException) throw it; Log.w("GalleryApp", "Auto backup failed", it) }
+                }
+            }
+        }
+
+        /** Mirrors every source (media library + picked folders) into ObjectBox. */
+        suspend fun syncSources() {
+            runCatching { library.sync() }
+                .onSuccess { Log.i("GalleryApp", "Media sync: $it (access=${library.hasAccess()})") }
+                .onFailure { Log.w("GalleryApp", "Media sync failed", it) }
+            runCatching { folders.syncAll() }.onFailure { Log.w("GalleryApp", "Folder sync failed", it) }
+            runCatching { folders.dedupe() }
+            indexer.refreshCounts()
+        }
+
+        private val loading = Mutex()
+
+        /**
+         * Loads the EmbeddingGemma 2 the user's model choice points at (Android's or the bundled
+         * one), if it is ready. Shared by the UI and the background worker so whichever runs first
+         * pays the load cost once per process. When the model changes, indexing pauses for the
+         * swap and photos indexed by the old model are queued again: the two spaces don't mix.
+         */
+        suspend fun ensureEmbedder(): Boolean = loading.withLock {
+            val source = models.locate()
+            if (source == null) {
+                // The chosen model isn't here (yet): don't keep searching with a different one.
+                if (embedder.isReady) {
+                    indexer.stopAndJoin()
+                    embedder.close()
+                }
+                return@withLock false
+            }
+            if (embedder.isReady && embedder.modelId == source.id) return@withLock true
+            return@withLock try {
+                indexer.stopAndJoin()
+                embedder.load(source)
+                // Can touch every row in the library: never on the main thread.
+                kotlinx.coroutines.withContext(Dispatchers.IO) { indexer.invalidateOtherModels(source.id) }
+                // Whether the model can hear changes how much work there is.
+                indexer.refreshCounts()
+                true
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                Log.e("GalleryApp", "Could not load EmbeddingGemma 2 (${source.id})", t)
+                false
+            }
+        }
+    }
+}
