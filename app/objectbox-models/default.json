@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:4202196628117484913",
-      "lastPropertyId": "19:4147846964981414496",
+      "lastPropertyId": "21:8994956886170298476",
       "name": "Photo",
       "properties": [
         {
@@ -118,6 +118,18 @@
         {
           "id": "19:4147846964981414496",
           "name": "soundDoneMs",
+          "type": 6
+        },
+        {
+          "id": "20:722879156087197883",
+          "name": "speechState",
+          "indexId": "15:686099281085083548",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "21:8994956886170298476",
+          "name": "speechDoneMs",
           "type": 6
         }
       ],
@@ -244,10 +256,46 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "5:5606831752138407143",
+      "lastPropertyId": "5:3979500739293718604",
+      "name": "AudioText",
+      "properties": [
+        {
+          "id": "1:7046399593689985318",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6694058545152923802",
+          "name": "photoId",
+          "indexId": "14:1551571130560974373",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:1541712313891600501",
+          "name": "startMs",
+          "type": 6
+        },
+        {
+          "id": "4:7982144374148359953",
+          "name": "endMs",
+          "type": 6
+        },
+        {
+          "id": "5:3979500739293718604",
+          "name": "text",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "4:6576574602230052914",
-  "lastIndexId": "13:6523022029386827377",
+  "lastEntityId": "5:5606831752138407143",
+  "lastIndexId": "15:686099281085083548",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

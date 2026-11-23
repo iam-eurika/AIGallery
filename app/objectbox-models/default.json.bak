@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:4202196628117484913",
-      "lastPropertyId": "14:4577302503756638666",
+      "lastPropertyId": "19:4147846964981414496",
       "name": "Photo",
       "properties": [
         {
@@ -90,6 +90,35 @@
           "indexId": "9:115940910682983881",
           "type": 9,
           "flags": 2048
+        },
+        {
+          "id": "15:4864948214322593109",
+          "name": "isVideo",
+          "indexId": "10:169663298072267350",
+          "type": 1,
+          "flags": 8
+        },
+        {
+          "id": "16:2369041220221897908",
+          "name": "durationMs",
+          "type": 6
+        },
+        {
+          "id": "17:5252359692614129353",
+          "name": "framesDoneMs",
+          "type": 6
+        },
+        {
+          "id": "18:2591389489253134224",
+          "name": "soundState",
+          "indexId": "11:8782169328430128776",
+          "type": 5,
+          "flags": 8
+        },
+        {
+          "id": "19:4147846964981414496",
+          "name": "soundDoneMs",
+          "type": 6
         }
       ],
       "relations": []
@@ -167,10 +196,58 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "4:6576574602230052914",
+      "lastPropertyId": "7:7003547594088255239",
+      "name": "VideoMoment",
+      "properties": [
+        {
+          "id": "1:678659100418781246",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2724851782653166107",
+          "name": "photoId",
+          "indexId": "12:7895405297976737010",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:3626994858811722379",
+          "name": "kind",
+          "type": 5
+        },
+        {
+          "id": "4:7338790434658449651",
+          "name": "startMs",
+          "type": 6
+        },
+        {
+          "id": "5:47934968733481680",
+          "name": "endMs",
+          "type": 6
+        },
+        {
+          "id": "6:2028670187337274347",
+          "name": "vector",
+          "indexId": "13:6523022029386827377",
+          "type": 28,
+          "flags": 8
+        },
+        {
+          "id": "7:7003547594088255239",
+          "name": "model",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "3:843983313588865052",
-  "lastIndexId": "9:115940910682983881",
+  "lastEntityId": "4:6576574602230052914",
+  "lastIndexId": "13:6523022029386827377",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

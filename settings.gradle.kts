@@ -22,6 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AI Gallery"
+rootProject.name = "SeekFrame"
 include(":app")
  
