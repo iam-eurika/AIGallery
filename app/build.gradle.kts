@@ -10,6 +10,23 @@ plugins {
     alias(libs.plugins.objectbox)
 }
 
+// The app's version comes from the release tag (v1.2.0 -> versionName 1.2.0, versionCode 10200),
+// so the in-app update check can compare it with GitHub's latest release. CI tag builds pass the
+// tag via GITHUB_REF_NAME; local builds use the nearest git tag; -PappVersion overrides both.
+val appVersion: String = run {
+    val fromProp = providers.gradleProperty("appVersion").orNull
+    val fromCi = providers.environmentVariable("GITHUB_REF_NAME").orNull?.takeIf { Regex("v\\d+(\\.\\d+)*").matches(it) }
+    val fromGit = runCatching {
+        providers.exec {
+            commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
+            isIgnoreExitValue = true
+        }.standardOutput.asText.get().trim().ifEmpty { null }
+    }.getOrNull()
+    (fromProp ?: fromCi ?: fromGit ?: "0.0.0").removePrefix("v")
+}
+val appVersionCode: Int = appVersion.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+    .let { (it.getOrElse(0) { 0 } * 10_000 + it.getOrElse(1) { 0 } * 100 + it.getOrElse(2) { 0 }).coerceAtLeast(1) }
+
 android {
     namespace = "com.lucrativeworm.seekframe"
     compileSdk {
@@ -20,8 +37,8 @@ android {
         applicationId = "com.lucrativeworm.seekframe"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -59,9 +59,11 @@ import com.lucrativeworm.seekframe.ui.screens.GalleryUiState
 import com.lucrativeworm.seekframe.ui.screens.SettingsScreen
 import com.lucrativeworm.seekframe.ui.screens.SettingsUiState
 import com.lucrativeworm.seekframe.ui.screens.SourceActions
+import com.lucrativeworm.seekframe.ui.screens.UpdateSettings
 import com.lucrativeworm.seekframe.ui.screens.ViewerScreen
 import com.lucrativeworm.seekframe.ui.screens.WelcomeScreen
 import com.lucrativeworm.seekframe.ui.theme.GalleryTheme
+import com.lucrativeworm.seekframe.update.Updater
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
@@ -69,6 +71,7 @@ import kotlinx.coroutines.launch
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var indexer: Indexer
+    @Inject lateinit var updater: Updater
 
     // Any touch tells the indexer someone is using the phone, so it yields the GPU for a moment.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
@@ -81,7 +84,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             GalleryTheme {
-                Root()
+                Root(updater)
             }
         }
     }
@@ -121,7 +124,7 @@ private fun newSnapUri(context: android.content.Context): Uri {
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewModel = hiltViewModel()) {
+private fun Root(updater: Updater, vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewModel = hiltViewModel()) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(hasPhotoAccess(context)) }
     var denied by rememberSaveable { mutableStateOf(false) }
@@ -170,7 +173,10 @@ private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewMod
         )
         return
     }
-    LaunchedEffect(Unit) { vm.start() }
+    LaunchedEffect(Unit) {
+        vm.start()
+        updater.checkOnLaunch()
+    }
 
     // People who allowed photos before videos were supported get asked once for videos too.
     LaunchedEffect(granted) {
@@ -415,6 +421,8 @@ private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewMod
                     val soundDownload by vm.soundDownload.collectAsStateWithLifecycle()
                     val backups by vm.backups.collectAsStateWithLifecycle()
                     val speechNow by vm.speech.collectAsStateWithLifecycle()
+                    val updatesOn by updater.enabled.collectAsStateWithLifecycle()
+                    val updateCheck by updater.lastCheck.collectAsStateWithLifecycle()
                     SettingsScreen(
                         state = SettingsUiState(
                             choice, model, system, active, remember(model, soundDownload) { vm.bundledDownloaded() },
@@ -446,6 +454,13 @@ private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewMod
                                 onDismissMessage = vm::clearBackupMessage,
                             )
                         },
+                        updates = UpdateSettings(
+                            installed = updater.installedVersion,
+                            enabled = updatesOn,
+                            status = updateCheck,
+                            onEnabled = updater::setEnabled,
+                            onCheckNow = updater::checkNow,
+                        ),
                     )
                 } else if (target is Viewing) {
                     val photos = remember(target, deletedIds) { target.photos.filterNot { it.id in deletedIds } }
@@ -519,10 +534,24 @@ private fun Root(vm: GalleryViewModel = hiltViewModel(), circleVm: CircleViewMod
         onDismiss = { speechDeferred = true },
     )
 
+    val scheduleVisible = needsIndexSchedule && !indexScheduleDeferred && top == null && !soundsVisible && !speechVisible
     com.lucrativeworm.seekframe.ui.components.IndexScheduleSheet(
-        visible = needsIndexSchedule && !indexScheduleDeferred && top == null && !soundsVisible && !speechVisible,
+        visible = scheduleVisible,
         onChoose = vm::setIndexSchedule,
         onDismiss = { indexScheduleDeferred = true },
+    )
+
+    // A newer release: offered on the gallery or in Settings, never over another question.
+    val update by updater.state.collectAsStateWithLifecycle()
+    val updateFree = (top == null || top is Configuring) && !soundsVisible && !speechVisible && !scheduleVisible && confirmDelete == null
+    com.lucrativeworm.seekframe.ui.components.UpdateSheet(
+        state = if (updateFree) update else Updater.State.Idle,
+        installed = updater.installedVersion,
+        onDownload = updater::download,
+        onIgnore = updater::ignore,
+        onCancel = updater::cancelDownload,
+        onInstall = updater::install,
+        onDismiss = updater::dismiss,
     )
 
     val pendingDelete = confirmDelete
