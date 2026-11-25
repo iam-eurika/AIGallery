@@ -201,7 +201,8 @@ private fun Root(updater: Updater, vm: GalleryViewModel = hiltViewModel(), circl
         else vm.downloadModel()
     }
 
-    // Sounds in videos: the answer picks which model to download, so it's settled first.
+    // Sounds in videos: on phones with Android's model the answer picks which one Automatic
+    // downloads, so it's settled first.
     val sounds by vm.sounds.collectAsStateWithLifecycle()
     var askSounds by rememberSaveable { mutableStateOf(false) }
     var downloadAfterSounds by rememberSaveable { mutableStateOf(false) }
@@ -417,18 +418,18 @@ private fun Root(updater: Updater, vm: GalleryViewModel = hiltViewModel(), circl
                     val choice by vm.modelChoice.collectAsStateWithLifecycle()
                     val system by vm.systemModel.collectAsStateWithLifecycle()
                     val active by vm.embedderBackend.collectAsStateWithLifecycle()
-                    val soundMissing by vm.soundModelMissing.collectAsStateWithLifecycle()
-                    val soundDownload by vm.soundDownload.collectAsStateWithLifecycle()
+                    val fullMissing by vm.fullModelMissing.collectAsStateWithLifecycle()
+                    val fullDownload by vm.fullDownload.collectAsStateWithLifecycle()
                     val backups by vm.backups.collectAsStateWithLifecycle()
                     val speechNow by vm.speech.collectAsStateWithLifecycle()
                     val updatesOn by updater.enabled.collectAsStateWithLifecycle()
                     val updateCheck by updater.lastCheck.collectAsStateWithLifecycle()
                     SettingsScreen(
                         state = SettingsUiState(
-                            choice, model, system, active, remember(model, soundDownload) { vm.bundledDownloaded() },
+                            choice, model, system, active, remember(model, fullDownload) { vm.bundledDownloaded() },
                             sounds = sounds,
-                            soundModelMissing = soundMissing,
-                            soundDownload = soundDownload,
+                            fullModelMissing = fullMissing,
+                            fullDownload = fullDownload,
                             modelHears = remember(active) { vm.modelHears() },
                             speech = speechNow,
                         ),
@@ -440,7 +441,7 @@ private fun Root(updater: Updater, vm: GalleryViewModel = hiltViewModel(), circl
                         indexKinds = indexKinds,
                         onIndexKinds = vm::setIndexKinds,
                         onSounds = { on -> if (on != sounds) vm.setSounds(on) },
-                        onDownloadSoundModel = vm::downloadSoundModel,
+                        onDownloadFullModel = vm::downloadFullModel,
                         onSpeech = { vm.chooseSpeech(it) },
                         onDownloadSpeech = vm::downloadSpeech,
                         backups = backups,

@@ -154,27 +154,27 @@ class GalleryViewModel @Inject constructor(
 
     /** Whether sounds in videos are searchable; null until the user has answered. */
     val sounds: StateFlow<Boolean?> = models.sounds
-    val soundModelMissing: StateFlow<Boolean> = models.soundModelMissing
-    val soundDownload: StateFlow<ModelStore.State?> = models.soundDownload
+    val fullModelMissing: StateFlow<Boolean> = models.fullModelMissing
+    val fullDownload: StateFlow<ModelStore.State?> = models.fullDownload
 
     fun modelHears(): Boolean = embedder.supportsAudio
 
     /** What saying yes to sounds would cost right now, in a few words for the question. */
     fun soundsCost(): String {
         val active = embedder.modelId
+        val mb = com.lucrativeworm.seekframe.ml.BundledModel.APPROX_MB
         return when {
-            embedder.supportsAudio -> "Nothing to download: the model on this phone already hears."
-            models.bundledFile(com.lucrativeworm.seekframe.ml.Variant.FULL) != null -> "Nothing to download."
-            active == null -> "The model download grows from about ${com.lucrativeworm.seekframe.ml.Variant.VISION.approxMb} MB to ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB."
-            active.startsWith("mlkit:") -> "Android's built-in model can't hear, so the app downloads its own (about ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB) and prepares your library again with it."
-            else -> "It replaces the downloaded model with a larger one (about ${com.lucrativeworm.seekframe.ml.Variant.FULL.approxMb} MB) and prepares your library again."
+            embedder.supportsAudio || models.bundledFile() != null -> "Nothing to download: the model on this phone already hears."
+            active == null -> "Nothing extra: the same model handles pictures and sounds."
+            active.startsWith("mlkit:") -> "Android's built-in model can't hear, so the app downloads its own (about $mb MB) and prepares your library again with it."
+            else -> "Nothing extra: the model being downloaded already hears."
         }
     }
 
     /**
-     * The user's answer to sounds. Yes fetches the model that can hear (unless it's already here
-     * or the first download hasn't happened, which then fetches it directly); no forgets any
-     * soundtrack vectors. Either way the answer sticks and can be changed in Settings.
+     * The user's answer to sounds. With the downloaded model, yes just adds soundtrack vectors to
+     * videos and no forgets them: nothing is re-indexed. On Android's model (which can't hear) yes
+     * also fetches the downloaded one. Either way the answer sticks and can be changed in Settings.
      */
     fun setSounds(on: Boolean) {
         val before = models.sounds.value
@@ -182,19 +182,20 @@ class GalleryViewModel @Inject constructor(
         viewModelScope.launch {
             if (!on && before == true) indexer.forgetSounds()
             models.locate()
-            if (on && models.soundModelMissing.value) downloadSoundModel()
+            if (on && models.fullModelMissing.value) downloadFullModel()
             loadModel()
             indexer.refreshCounts()
         }
     }
 
-    private var soundJob: Job? = null
+    private var fullJob: Job? = null
 
-    fun downloadSoundModel() {
-        if (soundJob?.isActive == true) return
-        soundJob = viewModelScope.launch {
-            runCatching { models.downloadSoundModel() }
-                .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Sound model download failed", it) }
+    /** Fetches the downloaded model in the background while search keeps running on the current one. */
+    fun downloadFullModel() {
+        if (fullJob?.isActive == true) return
+        fullJob = viewModelScope.launch {
+            runCatching { models.downloadFullModel() }
+                .onFailure { if (it is CancellationException) throw it; Log.w(TAG, "Model download failed", it) }
             loadModel()
             indexer.refreshCounts()
         }
@@ -463,7 +464,16 @@ class GalleryViewModel @Inject constructor(
 
     private suspend fun loadModel() {
         if (embedderLoader.ensureLoaded()) startIndexing()
+        // A phone still on the old smaller model moves to the one that does everything. The user
+        // already chose a downloaded model, so this replaces it without asking again.
+        // Once per launch: a failed download waits for the user's Retry in Settings.
+        if (!autoUpgraded && models.fullModelMissing.value && embedder.modelId == com.lucrativeworm.seekframe.ml.LegacyVisionModel.ID) {
+            autoUpgraded = true
+            downloadFullModel()
+        }
     }
+
+    private var autoUpgraded = false
 
     /**
      * Index in-process right away, and hand the same pass to WorkManager so it survives leaving.
