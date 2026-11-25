@@ -69,7 +69,7 @@ import com.lucrativeworm.seekframe.ml.SpeechEngine
 import com.lucrativeworm.seekframe.ml.SpeechModel
 import com.lucrativeworm.seekframe.ml.SpeechStatus
 import com.lucrativeworm.seekframe.ml.SystemModelStatus
-import com.lucrativeworm.seekframe.ml.Variant
+import com.lucrativeworm.seekframe.ml.BundledModel
 import com.lucrativeworm.seekframe.ui.components.Glyph
 import com.lucrativeworm.seekframe.ui.components.GlyphIcon
 import com.lucrativeworm.seekframe.ui.components.IconButton
@@ -88,10 +88,10 @@ class SettingsUiState(
     val bundledDownloaded: Boolean,
     /** Sounds in videos searchable? null = not answered yet. */
     val sounds: Boolean? = null,
-    /** Sounds are on but the model that can hear isn't downloaded yet. */
-    val soundModelMissing: Boolean = false,
-    /** Progress of that download, if one is running or failed. */
-    val soundDownload: ModelStore.State? = null,
+    /** Search runs on a model that should be replaced by the downloaded one (old model, or Android's with sounds on). */
+    val fullModelMissing: Boolean = false,
+    /** Progress of that background download, if one is running or failed. */
+    val fullDownload: ModelStore.State? = null,
     /** The loaded model has an audio encoder. */
     val modelHears: Boolean = false,
     /** Speech-to-text for spoken words: the choice, what this phone offers, any download. */
@@ -109,7 +109,7 @@ fun SettingsScreen(
     indexKinds: IndexKinds = IndexKinds(),
     onIndexKinds: (IndexKinds) -> Unit = {},
     onSounds: (Boolean) -> Unit = {},
-    onDownloadSoundModel: () -> Unit = {},
+    onDownloadFullModel: () -> Unit = {},
     onSpeech: (SpeechChoice) -> Unit = {},
     onDownloadSpeech: () -> Unit = {},
     backups: IndexBackups.State? = null,
@@ -121,7 +121,7 @@ fun SettingsScreen(
     var open by rememberSaveable { mutableStateOf<Picker?>(null) }
     val close = { open = null }
     val systemOk = state.system != SystemModelStatus.UNSUPPORTED
-    val downloadMb = if (state.sounds == true) Variant.FULL.approxMb else Variant.VISION.approxMb
+    val downloadMb = BundledModel.APPROX_MB
 
     // Where each section starts in the scrolled content, so the jump bar can scroll to it and
     // light up the one you're reading.
@@ -192,6 +192,19 @@ fun SettingsScreen(
                         ) {
                             NeedsAction(state.model, onDownload, Modifier.padding(top = 12.dp))
                         }
+                        val full = state.fullDownload
+                        AnimatedVisibility(
+                            visible = state.model is ModelStore.State.Ready && (state.fullModelMissing || full != null),
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
+                        ) {
+                            NeedsAction(
+                                full ?: ModelStore.State.Missing(ModelStore.Target.BUNDLED),
+                                onDownloadFullModel,
+                                Modifier.padding(top = 12.dp),
+                                missingText = "Search keeps working with the current model while the one that also hears downloads (about $downloadMb MB). Then your library is prepared again with it.",
+                            )
+                        }
                         if (systemOk) {
                             Spacer(Modifier.height(14.dp))
                             Txt(
@@ -221,19 +234,6 @@ fun SettingsScreen(
                             status = if (state.sounds == false) "Sounds aren't indexed" else soundStatus(state),
                             onClick = { open = Picker.SOUNDS },
                         )
-                        val sound = state.soundDownload
-                        AnimatedVisibility(
-                            visible = state.sounds == true && (state.soundModelMissing || sound != null),
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut(tween(160)) + shrinkVertically(Motion.glide()),
-                        ) {
-                            NeedsAction(
-                                sound ?: ModelStore.State.Missing(ModelStore.Target.BUNDLED),
-                                onDownloadSoundModel,
-                                Modifier.padding(top = 12.dp),
-                                missingText = "Search keeps working with the current model while the one that can hear downloads (about ${Variant.FULL.approxMb} MB). Then your library is prepared again with it.",
-                            )
-                        }
                         AnimatedVisibility(
                             visible = state.sounds == true,
                             enter = fadeIn() + expandVertically(),
@@ -363,7 +363,7 @@ fun SettingsScreen(
         OptionSheet(open == Picker.SOUNDS, "Sounds in videos", Glyph.Wave, onDismiss = close) {
             Option(
                 title = "Include sounds",
-                body = "Uses the larger downloaded model (about ${Variant.FULL.approxMb} MB), since Android's built-in one can't hear. Videos take longer to prepare.",
+                body = "Also search videos by what you hear. Uses the downloaded model (about $downloadMb MB), since Android's built-in one can't hear. Videos take longer to prepare.",
                 status = soundStatus(state),
                 selected = state.sounds == true,
                 onClick = { onSounds(true); close() },
@@ -645,8 +645,8 @@ private fun soundStatus(s: SettingsUiState): String = when {
     s.sounds != true -> if (s.sounds == null) "Not chosen yet" else "Off"
     s.choice == ModelChoice.SYSTEM -> "Android's model can't hear. Choose Automatic or the downloaded model above"
     s.modelHears -> "On, sounds are being indexed"
-    s.soundDownload is ModelStore.State.Downloading -> "Downloading the model that can hear…"
-    s.soundModelMissing -> "Needs the model that can hear"
+    s.fullDownload is ModelStore.State.Downloading -> "Downloading the model that can hear…"
+    s.fullModelMissing -> "Needs the model that can hear"
     else -> "On"
 }
 

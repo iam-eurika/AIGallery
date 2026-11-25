@@ -787,7 +787,7 @@ private fun ModelCard(state: ModelStore.State, onDownload: () -> Unit, onOpenSet
                 system ->
                     "Android can fetch EmbeddingGemma 2 for this phone, once. After that, search works offline and your photos never leave this phone."
                 else ->
-                    "A one-time download of EmbeddingGemma 2 (about 390 MB, or 485 MB to also search sounds in videos). After that, search works offline and your photos never leave this phone."
+                    "A one-time download of EmbeddingGemma 2 (about ${com.lucrativeworm.seekframe.ml.BundledModel.APPROX_MB} MB), which searches photos and videos, including what they sound like. After that, search works offline and your photos never leave this phone."
             },
             t.caption, c.inkSoft,
         )

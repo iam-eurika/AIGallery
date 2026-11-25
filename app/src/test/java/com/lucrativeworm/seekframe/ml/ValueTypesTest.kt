@@ -26,15 +26,12 @@ class ValueTypesTest {
     }
 
     @Test
-    fun `variants point at their hugging face files`() {
-        for (v in Variant.entries) {
-            assertTrue(v.url.startsWith("https://huggingface.co/litert-community/${v.repo}/"))
-            assertTrue(v.url.endsWith("/${v.fileName}"))
-            assertEquals(64, v.sha256.length)
-        }
-        assertTrue(Variant.FULL.audio)
-        assertFalse(Variant.VISION.audio)
-        assertTrue(Variant.FULL.approxMb > Variant.VISION.approxMb)
+    fun `bundled model points at its hugging face file`() {
+        assertTrue(BundledModel.URL.startsWith("https://huggingface.co/litert-community/${BundledModel.REPO}/"))
+        assertTrue(BundledModel.URL.endsWith("/${BundledModel.FILE_NAME}"))
+        assertEquals(64, BundledModel.SHA256.length)
+        assertTrue(ModelStore.Source.Bundled(java.io.File("x")).audio)
+        assertTrue(ModelStore.Source.Bundled(java.io.File("x"), LegacyVisionModel.ID, audio = false).legacy)
     }
 
     @Test

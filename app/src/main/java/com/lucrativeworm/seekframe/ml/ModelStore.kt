@@ -41,24 +41,27 @@ enum class ModelChoice {
 enum class SystemModelStatus { CHECKING, UNREACHABLE, UNSUPPORTED, DOWNLOADABLE, DOWNLOADING, AVAILABLE }
 
 /**
- * The two downloadable EmbeddingGemma 2 files. They map text and images into the same kind of
- * space, but they're different files and we don't assume their vectors are interchangeable.
+ * The downloadable EmbeddingGemma 2: text, images and audio in one space, so a whole video
+ * (what it shows and what it sounds like) is indexed with one model. Whether sounds are indexed
+ * is the user's choice ([ModelStore.sounds]); the model is the same either way.
  */
-enum class Variant(val fileName: String, val id: String, val repo: String, val sha256: String, val approxMb: Int, val audio: Boolean) {
-    /** Text + images. What a gallery needs, and the smallest file that does it. */
-    VISION(
-        "embeddinggemma-2-text-vision-440m.litertlm", "embeddinggemma-2-text-vision-440m",
-        "embeddinggemma-2-text-vision-440m-litert-lm",
-        "92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0", 390, audio = false,
-    ),
-    /** Text + images + audio: also lets search find what is heard in videos. */
-    FULL(
-        "embeddinggemma-2-740m.litertlm", "embeddinggemma-2-740m",
-        "embeddinggemma-2-740m-litert-lm",
-        "e7a8a2204b91e0f96e92960e84a09a89212e1633dcb7575a9bf3378b4df77f4c", 485, audio = true,
-    );
+object BundledModel {
+    const val FILE_NAME = "embeddinggemma-2-740m.litertlm"
+    const val ID = "embeddinggemma-2-740m"
+    const val REPO = "embeddinggemma-2-740m-litert-lm"
+    const val SHA256 = "e7a8a2204b91e0f96e92960e84a09a89212e1633dcb7575a9bf3378b4df77f4c"
+    const val APPROX_MB = 485
+    const val URL = "https://huggingface.co/litert-community/$REPO/resolve/main/$FILE_NAME"
+}
 
-    val url get() = "https://huggingface.co/litert-community/$repo/resolve/main/$fileName"
+/**
+ * The smaller text + image model earlier versions downloaded when sounds were off. Never fetched
+ * any more: a phone that still has it searches with it until [BundledModel] has downloaded in the
+ * background, then it's deleted.
+ */
+internal object LegacyVisionModel {
+    const val FILE_NAME = "embeddinggemma-2-text-vision-440m.litertlm"
+    const val ID = "embeddinggemma-2-text-vision-440m"
 }
 
 /**
@@ -74,12 +77,11 @@ object SpeechModel {
 
 /**
  * Finds or fetches EmbeddingGemma 2, either the copy Android manages through ML Kit GenAI
- * (AICore) or a bundled LiteRT-LM file, following the user's [ModelChoice] and whether they want
- * sounds in videos to be searchable ([sounds]). Only the bundled [Variant.FULL] file has the audio
- * encoder, so sound search needs it; without sounds the smaller [Variant.VISION] file is enough.
+ * (AICore) or the bundled LiteRT-LM file ([BundledModel]), following the user's [ModelChoice].
+ * Android's model has no audio encoder, so when sounds in videos are wanted ([sounds]) Automatic
+ * uses the bundled one.
  *
  * Developers can skip the bundled download with:
- *   adb push embeddinggemma-2-text-vision-440m.litertlm /data/local/tmp/aigallery/
  *   adb push embeddinggemma-2-740m.litertlm /data/local/tmp/aigallery/
  */
 @Singleton
@@ -92,7 +94,10 @@ class ModelStore @Inject constructor(
     sealed interface Source {
         val id: String
         class System(val model: SystemModel) : Source { override val id get() = model.id }
-        class Bundled(val file: File, val variant: Variant) : Source { override val id get() = variant.id }
+        /** [audio] is false only for [LegacyVisionModel], which has no audio encoder. */
+        class Bundled(val file: File, override val id: String = BundledModel.ID, val audio: Boolean = true) : Source {
+            val legacy get() = id == LegacyVisionModel.ID
+        }
     }
 
     enum class Target { SYSTEM, BUNDLED }
@@ -130,9 +135,11 @@ class ModelStore @Inject constructor(
 
     private val _sounds = MutableStateFlow(if (prefs.contains(KEY_SOUNDS)) prefs.getBoolean(KEY_SOUNDS, false) else null)
     /**
-     * Whether sounds in videos should be searchable; null until the user has been asked. It decides
-     * which model to download (and switching later re-indexes the whole library), so it's asked
-     * before the first download, again on app open while unanswered, and in Settings.
+     * Whether sounds in videos should be searchable; null until the user has been asked. With the
+     * bundled model, turning it on or off only adds or drops soundtrack vectors. Android's model
+     * can't hear, so on phones that offer it the answer also decides which model Automatic uses;
+     * that's why it's asked before the first download, again on app open while unanswered, and in
+     * Settings.
      */
     val sounds: StateFlow<Boolean?> = _sounds.asStateFlow()
 
@@ -141,16 +148,19 @@ class ModelStore @Inject constructor(
         _sounds.value = on
     }
 
-    /** True when sounds are on but the model with the audio encoder hasn't been downloaded yet. */
-    private val _soundModelMissing = MutableStateFlow(false)
-    val soundModelMissing: StateFlow<Boolean> = _soundModelMissing.asStateFlow()
+    /**
+     * True while search runs on a model other than [BundledModel] that should be replaced by it:
+     * the [LegacyVisionModel], or Android's model when sounds are wanted.
+     */
+    private val _fullModelMissing = MutableStateFlow(false)
+    val fullModelMissing: StateFlow<Boolean> = _fullModelMissing.asStateFlow()
 
     /**
-     * Progress of the separate download of [Variant.FULL] while search keeps running on the model
-     * already loaded. Null when no such download is going on.
+     * Progress of the background download of [BundledModel] while search keeps running on the
+     * model already loaded. Null when no such download is going on.
      */
-    private val _soundDownload = MutableStateFlow<State?>(null)
-    val soundDownload: StateFlow<State?> = _soundDownload.asStateFlow()
+    private val _fullDownload = MutableStateFlow<State?>(null)
+    val fullDownload: StateFlow<State?> = _fullDownload.asStateFlow()
 
     /** Sound search is wanted and possible with the current choice (Android's model has no audio). */
     private fun wantsFull() = _sounds.value == true && _choice.value != ModelChoice.SYSTEM
@@ -160,22 +170,28 @@ class ModelStore @Inject constructor(
         _choice.value = choice
     }
 
-    /** The bundled file for [variant] on disk, if any. */
-    fun bundledFile(variant: Variant): File? {
+    /** The bundled model on disk, if any. */
+    fun bundledFile(): File? = findFile(BundledModel.FILE_NAME)
+
+    /** The old text + image model, while it's still on disk and the bundled one isn't. */
+    private fun legacyFile(): File? = if (bundledFile() != null) null else findFile(LegacyVisionModel.FILE_NAME)
+
+    private fun findFile(fileName: String): File? {
         val candidates = listOfNotNull(
-            File("/data/local/tmp/aigallery", variant.fileName),
-            context.getExternalFilesDir(null)?.let { File(it, variant.fileName) },
-            File(modelDir, variant.fileName),
+            File("/data/local/tmp/aigallery", fileName),
+            context.getExternalFilesDir(null)?.let { File(it, fileName) },
+            File(modelDir, fileName),
         )
         return candidates.firstOrNull { it.canRead() && it.length() > 0 }
     }
 
-    /** The best bundled file on disk: the full one does everything the smaller one does. */
-    fun bundledSource(): Source.Bundled? =
-        bundledFile(Variant.FULL)?.let { Source.Bundled(it, Variant.FULL) }
-            ?: if (wantsFull()) null else bundledFile(Variant.VISION)?.let { Source.Bundled(it, Variant.VISION) }
+    fun bundledDownloaded(): Boolean = bundledFile() != null || legacyFile() != null
 
-    fun bundledDownloaded(): Boolean = bundledFile(Variant.FULL) != null || bundledFile(Variant.VISION) != null
+    /** Deletes the app's own copies of the old text + image model. */
+    private fun deleteLegacy() {
+        File(modelDir, LegacyVisionModel.FILE_NAME).delete()
+        context.getExternalFilesDir(null)?.let { File(it, LegacyVisionModel.FILE_NAME).delete() }
+    }
 
     /**
      * Works out which model to use for the current [choice] and publishes it as [state].
@@ -189,37 +205,39 @@ class ModelStore @Inject constructor(
         // Android-only was picked, but this phone has no AICore: there's no such choice here (Settings
         // hides it), so fall back to Automatic instead of leaving search off.
         if (status == SystemModelStatus.UNSUPPORTED && _choice.value == ModelChoice.SYSTEM) setChoice(ModelChoice.AUTO)
-        val full = bundledFile(Variant.FULL)?.let { State.Ready(Source.Bundled(it, Variant.FULL)) }
-        // Until the sound model arrives, search keeps running on whatever model is already here.
-        val fallback = bundledFile(Variant.VISION)?.let { State.Ready(Source.Bundled(it, Variant.VISION)) }
+        val full = bundledFile()?.let { State.Ready(Source.Bundled(it)) }
+        // An earlier version's smaller model keeps search going until the bundled one is here.
+        val legacy = legacyFile()?.let { State.Ready(Source.Bundled(it, LegacyVisionModel.ID, audio = false)) }
         val next: State = when (_choice.value) {
             ModelChoice.SYSTEM -> systemState(status)
                 ?: if (status == SystemModelStatus.UNREACHABLE) State.Failed(SystemModel.UNREACHABLE_MESSAGE, Target.SYSTEM) else State.Unsupported
-            ModelChoice.BUNDLED -> full ?: fallback ?: State.Missing(Target.BUNDLED)
+            ModelChoice.BUNDLED -> full ?: legacy ?: State.Missing(Target.BUNDLED)
             ModelChoice.AUTO -> {
                 // Vectors from different models can't be compared, so changing model re-indexes
                 // the whole library. Automatic therefore stays with whatever built the index.
                 val indexed = indexedWith()
                 val systemReady = systemState(status)?.takeIf { it is State.Ready }
-                val kept = listOfNotNull(full, fallback, systemReady).firstOrNull { (it as State.Ready).source.id == indexed }
                 when {
-                    // Once the model that can hear is here, keep it even with sounds off: it does
-                    // everything the others do, and switching away would re-index the whole library.
+                    // The bundled model does everything the others do: once it's here, keep it.
                     full != null -> full
-                    kept != null -> kept
+                    legacy != null && indexed == LegacyVisionModel.ID -> legacy
                     // The index is Android's, but AICore didn't answer this time: wait for it
                     // rather than throw that index away for a bundled file.
                     indexed?.startsWith(SystemModel.ID_PREFIX) == true && status == SystemModelStatus.UNREACHABLE ->
                         State.Failed(SystemModel.UNREACHABLE_MESSAGE, Target.SYSTEM)
-                    wantsFull() -> systemReady ?: fallback ?: State.Missing(Target.BUNDLED)
+                    // With sounds wanted, search keeps running here while the bundled model downloads.
                     systemReady != null -> systemReady
-                    // A bundled file the user already fetched beats a second, system-side download.
-                    else -> fallback ?: systemState(status) ?: State.Missing(Target.BUNDLED)
+                    legacy != null -> legacy
+                    wantsFull() -> State.Missing(Target.BUNDLED)
+                    // A system-side download, where offered, is free for the app to store.
+                    else -> systemState(status) ?: State.Missing(Target.BUNDLED)
                 }
             }
         }
         _state.value = next
-        _soundModelMissing.value = wantsFull() && full == null
+        val running = (next as? State.Ready)?.source
+        _fullModelMissing.value = full == null && running != null &&
+            ((running as? Source.Bundled)?.legacy == true || (running is Source.System && wantsFull()))
         _checked.value = true
         return (next as? State.Ready)?.source
     }
@@ -247,9 +265,9 @@ class ModelStore @Inject constructor(
         return when ((_state.value as? State.Missing)?.target ?: (_state.value as? State.Failed)?.target) {
             Target.SYSTEM -> downloadSystem()
             else -> {
-                val variant = if (wantsFull()) Variant.FULL else Variant.VISION
-                Source.Bundled(downloadBundled(variant) { _state.value = it }, variant).also {
+                Source.Bundled(downloadBundled { _state.value = it }).also {
                     _state.value = State.Ready(it)
+                    deleteLegacy()
                     locate()
                 }
             }
@@ -257,17 +275,17 @@ class ModelStore @Inject constructor(
     }
 
     /**
-     * Fetches the model with the audio encoder while search keeps running on the current one.
-     * Once it's in place, [locate] switches to it and the smaller file is deleted.
+     * Fetches [BundledModel] while search keeps running on the current model ([fullModelMissing]).
+     * Once it's in place, [locate] switches to it and the old smaller file is deleted.
      */
-    suspend fun downloadSoundModel() {
-        if (_soundDownload.value is State.Downloading || _soundDownload.value == State.Verifying) return
-        if (bundledFile(Variant.FULL) == null) {
-            // A failure stays in [soundDownload] so Settings can offer to try again.
-            downloadBundled(Variant.FULL) { _soundDownload.value = it }
+    suspend fun downloadFullModel() {
+        if (_fullDownload.value is State.Downloading || _fullDownload.value == State.Verifying) return
+        if (bundledFile() == null) {
+            // A failure stays in [fullDownload] so Settings can offer to try again.
+            downloadBundled { _fullDownload.value = it }
         }
-        _soundDownload.value = null
-        File(modelDir, Variant.VISION.fileName).delete()
+        _fullDownload.value = null
+        deleteLegacy()
         locate()
     }
 
@@ -399,9 +417,9 @@ class ModelStore @Inject constructor(
     }
 
     /** Resumable download straight from Hugging Face (Apache 2.0, ungated). */
-    private suspend fun downloadBundled(variant: Variant, publish: (State) -> Unit): File {
-        bundledFile(variant)?.let { return it }
-        return downloadFile(variant.url, variant.fileName, variant.sha256, publish)
+    private suspend fun downloadBundled(publish: (State) -> Unit): File {
+        bundledFile()?.let { return it }
+        return downloadFile(BundledModel.URL, BundledModel.FILE_NAME, BundledModel.SHA256, publish)
     }
 
     /** Resumable, checksummed download of [url] into the models folder as [fileName]. */

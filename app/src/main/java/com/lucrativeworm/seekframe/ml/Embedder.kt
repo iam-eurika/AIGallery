@@ -50,7 +50,7 @@ class Embedder @Inject constructor(@ApplicationContext private val context: Cont
     var backend: Backend? = null
         private set
 
-    /** True when the loaded model has the audio encoder ([Variant.FULL]), so sounds can be embedded. */
+    /** True when the loaded model has the audio encoder ([BundledModel]), so sounds can be embedded. */
     @Volatile var supportsAudio: Boolean = false
         private set
 
@@ -70,8 +70,8 @@ class Embedder @Inject constructor(@ApplicationContext private val context: Cont
                 backend = Backend.SYSTEM
             }
             is ModelStore.Source.Bundled -> {
-                loadBundled(source.file, source.variant.audio)
-                supportsAudio = source.variant.audio
+                loadBundled(source.file, source.audio)
+                supportsAudio = source.audio
             }
         }
         _model.value = source.id
